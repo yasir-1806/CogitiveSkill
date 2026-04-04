@@ -244,9 +244,10 @@ body {
 /* Keep Google sign-in button readable and full width across browsers */
 .google-login-wrap {
   min-height: 44px;
+  display: flex;
+  justify-content: center;
 }
 
-.google-login-wrap > div,
-.google-login-wrap iframe {
-  width: 100% !important;
+.google-login-wrap > div {
+  max-width: 100%;
 }

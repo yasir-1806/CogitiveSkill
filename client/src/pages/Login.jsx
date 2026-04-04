@@ -71,11 +71,12 @@ export default function Login() {
             <GoogleLogin 
               onSuccess={handleGoogleSuccess} 
               onError={() => setError('Google Authentication Failed')}
-              theme={isLight ? "outline" : "filled_black"}
+              theme={isLight ? "outline" : "outline"}
               shape="pill"
               text="signin_with"
               size="large"
-              width="100%"
+              logo_alignment="left"
+              width="380"
             />
           </div>
         </div>
