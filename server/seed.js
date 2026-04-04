@@ -111,7 +111,7 @@ const seedDB = async () => {
           title: `Level ${lvl} – ${difficultyMap[lvl - 1].charAt(0).toUpperCase() + difficultyMap[lvl - 1].slice(1)}`,
           description: `${difficultyMap[lvl - 1].charAt(0).toUpperCase() + difficultyMap[lvl - 1].slice(1)} difficulty assessment`,
           timeLimit: 3600, // Fixed 1 hour (3600 seconds)
-          passingScore: 60 + (lvl - 1) * 5,
+          passingScore: 60,
         });
         levels.push(level);
 
@@ -135,7 +135,8 @@ const seedDB = async () => {
     }
     console.log('✅ Levels and questions (40 per level) created for all topics');
 
-    // Create 4 default slots for today and next 7 days
+    // Create slots - (Removed automatic slot creation as requested)
+    /*
     const today = new Date();
     const slotTemplates = [
       { startTime: '09:00', endTime: '10:00', slotLabel: 'Slot 1' },
@@ -153,6 +154,7 @@ const seedDB = async () => {
       }
     }
     console.log('✅ Slots created for next 7 days');
+    */
 
     console.log('\n🎉 Database seeded successfully!');
     console.log('📧 Admin: admin@cogniq.com | 🔐 Password: admin123');

@@ -7,8 +7,8 @@ const levelSchema = new mongoose.Schema({
   title: { type: String, required: true },
   description: { type: String, default: '' },
   timeLimit: { type: Number, default: 600, comment: 'seconds' },
-  passingScore: { type: Number, default: 70, comment: 'percentage' },
-  totalQuestions: { type: Number, default: 10 },
+  passingScore: { type: Number, default: 60, comment: 'percentage' },
+  totalQuestions: { type: Number, default: 40 },
   isActive: { type: Boolean, default: true },
 }, { timestamps: true });
 
