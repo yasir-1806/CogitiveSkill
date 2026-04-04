@@ -67,7 +67,7 @@ export default function Login() {
         )}
 
         <div className="mb-6 flex justify-center w-full">
-          <div className="w-full max-w-sm google-login-wrap">
+          <div className="w-full max-w-md google-login-wrap">
             <GoogleLogin 
               onSuccess={handleGoogleSuccess} 
               onError={() => setError('Google Authentication Failed')}
@@ -76,7 +76,7 @@ export default function Login() {
               text="signin_with"
               size="large"
               logo_alignment="left"
-              width="380"
+              width="420"
             />
           </div>
         </div>
