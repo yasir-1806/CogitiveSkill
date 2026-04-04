@@ -66,27 +66,12 @@ export default function Login() {
           </motion.div>
         )}
 
-        <div className="mb-6 flex justify-center w-full">
-          <div className="w-full max-w-md google-login-wrap">
-            <GoogleLogin 
-              onSuccess={handleGoogleSuccess} 
-              onError={() => setError('Google Authentication Failed')}
-              theme={isLight ? "outline" : "outline"}
-              shape="pill"
-              text="signin_with"
-              size="large"
-              logo_alignment="left"
-              width="420"
-            />
-          </div>
-        </div>
-
         <div className="relative mb-6">
           <div className="absolute inset-0 flex items-center">
             <div className="w-full border-t" style={{ borderColor: 'var(--border-color)' }}></div>
           </div>
           <div className="relative flex justify-center text-xs uppercase">
-            <span className="px-2 text-gray-500" style={{ background: 'var(--glass-bg)' }}>Or continue with email</span>
+            <span className="px-2 text-gray-500" style={{ background: 'var(--glass-bg)' }}>Sign in with email</span>
           </div>
         </div>
 
@@ -121,6 +106,30 @@ export default function Login() {
           Admin?{' '}
           <Link to="/admin/login" className="font-semibold" style={{ color: '#ff003c' }}>Admin Login</Link>
         </p>
+
+        <div className="mt-6">
+          <div className="relative mb-4">
+            <div className="absolute inset-0 flex items-center">
+              <div className="w-full border-t" style={{ borderColor: 'var(--border-color)' }}></div>
+            </div>
+            <div className="relative flex justify-center text-[11px] uppercase">
+              <span className="px-2 text-gray-500" style={{ background: 'var(--glass-bg)' }}>Or sign in with Google</span>
+            </div>
+          </div>
+
+          <div className="google-login-wrap mx-auto">
+            <GoogleLogin
+              onSuccess={handleGoogleSuccess}
+              onError={() => setError('Google Authentication Failed')}
+              theme={isLight ? "outline" : "outline"}
+              shape="pill"
+              text="signin_with"
+              size="medium"
+              logo_alignment="left"
+              width="240"
+            />
+          </div>
+        </div>
       </motion.div>
     </div>
   );
