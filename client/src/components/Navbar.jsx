@@ -1,5 +1,4 @@
 import { Link, useNavigate, useLocation } from 'react-router-dom';
-import { motion } from 'framer-motion';
 import { useAuth } from '../context/AuthContext';
 import { Sun, Moon, LogOut, User } from 'lucide-react';
 import Logo from './Logo';
@@ -14,9 +13,7 @@ export default function Navbar() {
   const isLandingPage = location.pathname === '/';
 
   return (
-    <motion.nav
-      initial={{ y: -60, opacity: 0 }}
-      animate={{ y: 0, opacity: 1 }}
+    <nav
       className="sticky top-0 z-50 w-full"
       style={{ background: 'var(--glass-bg)', backdropFilter: 'blur(20px)', borderBottom: '1px solid var(--glass-border)' }}
     >
@@ -71,6 +68,6 @@ export default function Navbar() {
           )}
         </div>
       </div>
-    </motion.nav>
+    </nav>
   );
 }

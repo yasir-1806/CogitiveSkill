@@ -1,5 +1,4 @@
 import { NavLink, useNavigate } from 'react-router-dom';
-import { motion } from 'framer-motion';
 import { useAuth } from '../context/AuthContext';
 import {
   LayoutDashboard, BookOpen, Calendar, Trophy, TrendingUp,
@@ -33,10 +32,7 @@ export default function Sidebar() {
   const navItems = user?.role === 'admin' ? adminNav : studentNav;
 
   return (
-    <motion.aside
-      initial={{ x: -260 }}
-      animate={{ x: 0 }}
-      transition={{ type: 'spring', stiffness: 300, damping: 30 }}
+    <aside
       className="sidebar fixed left-0 top-0 z-40 h-full flex flex-col pt-20 pb-6 px-3"
     >
       {/* Logo area */}
@@ -68,6 +64,6 @@ export default function Sidebar() {
         <LogOut size={20} />
         <span>Logout</span>
       </button>
-    </motion.aside>
+    </aside>
   );
 }

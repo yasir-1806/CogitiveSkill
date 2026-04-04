@@ -240,3 +240,13 @@ body {
   filter: blur(100px);
   pointer-events: none;
 }
+
+/* Keep Google sign-in button readable and full width across browsers */
+.google-login-wrap {
+  min-height: 44px;
+}
+
+.google-login-wrap > div,
+.google-login-wrap iframe {
+  width: 100% !important;
+}

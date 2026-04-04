@@ -67,13 +67,14 @@ export default function Login() {
         )}
 
         <div className="mb-6 flex justify-center w-full">
-          <div className="w-full max-w-sm">
+          <div className="w-full max-w-sm google-login-wrap">
             <GoogleLogin 
               onSuccess={handleGoogleSuccess} 
               onError={() => setError('Google Authentication Failed')}
               theme={isLight ? "outline" : "filled_black"}
               shape="pill"
               text="signin_with"
+              size="large"
               width="100%"
             />
           </div>
