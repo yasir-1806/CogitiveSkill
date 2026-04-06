@@ -46,16 +46,12 @@ export default function ManageQuestions() {
         context: aiConfig.context
       });
       setAiQuestions(res.data.data);
-      if (res.data.isMock) {
-        alert(`AI returned partial/low-quality output. ${res.data.count} question(s) were prepared, with fallback questions added where needed.`);
-      }
       setAiModalOpen(true);
     } catch (e) {
       const payload = e.response?.data;
       if (payload?.data?.length) {
         setAiQuestions(payload.data);
         setAiModalOpen(true);
-        alert(payload.message || 'Only partial high-quality questions were generated. Review and save what is useful.');
       } else {
         alert(payload?.message || 'AI Generation failed');
       }
