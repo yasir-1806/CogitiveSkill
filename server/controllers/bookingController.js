@@ -122,10 +122,17 @@ const getActiveBooking = async (req, res) => {
       .populate('topicId', 'topicName icon color')
       .populate('levelId', 'levelNumber difficulty title timeLimit passingScore');
 
+    const validBookings = bookings
+      .filter((b) => b.slotId && b.slotId.date && b.slotId.startTime && b.slotId.endTime)
+      .sort((a, b) => {
+        const dateCmp = a.slotId.date.localeCompare(b.slotId.date);
+        if (dateCmp !== 0) return dateCmp;
+        return a.slotId.startTime.localeCompare(b.slotId.startTime);
+      });
+
     // Prefer an in-window booking, but also allow today's upcoming booking so /test page can open.
-    const todaysBookings = bookings
-      .filter((b) => b.slotId && b.slotId.date === todayStr)
-      .sort((a, b) => a.slotId.startTime.localeCompare(b.slotId.startTime));
+    const todaysBookings = validBookings
+      .filter((b) => b.slotId.date === todayStr);
 
     const inWindowBooking = todaysBookings.find((b) => {
       const slot = b.slotId;
@@ -133,16 +140,26 @@ const getActiveBooking = async (req, res) => {
       return isWithinTime;
     });
     const upcomingTodayBooking = todaysBookings.find((b) => currentTime < b.slotId.endTime);
-    const activeBooking = inWindowBooking || upcomingTodayBooking || null;
+    const nextFutureBooking = validBookings.find((b) => {
+      const slot = b.slotId;
+      return slot.date > todayStr || (slot.date === todayStr && currentTime < slot.startTime);
+    });
+
+    const activeBooking = inWindowBooking || upcomingTodayBooking || nextFutureBooking || null;
 
     if (activeBooking) {
       const slot = activeBooking.slotId;
-      const [endHour, endMin] = slot.endTime.split(':').map(Number);
-      const slotEndDate = new Date(now);
-      slotEndDate.setHours(endHour, endMin, 0, 0);
+      let dynamicLimit = activeBooking.levelId.timeLimit;
 
-      const secondsRemaining = Math.floor((slotEndDate.getTime() - now.getTime()) / 1000);
-      const dynamicLimit = Math.min(activeBooking.levelId.timeLimit, secondsRemaining);
+      // Only constrain by slot-end when the slot is for today.
+      if (slot.date === todayStr) {
+        const [endHour, endMin] = slot.endTime.split(':').map(Number);
+        const slotEndDate = new Date(now);
+        slotEndDate.setHours(endHour, endMin, 0, 0);
+
+        const secondsRemaining = Math.floor((slotEndDate.getTime() - now.getTime()) / 1000);
+        dynamicLimit = Math.min(activeBooking.levelId.timeLimit, secondsRemaining);
+      }
       
       const responseBooking = {
         ...activeBooking.toObject(),

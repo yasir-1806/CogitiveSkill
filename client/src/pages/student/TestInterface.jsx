@@ -103,17 +103,24 @@ export default function TestInterface() {
         const todayStr = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}-${String(now.getDate()).padStart(2, '0')}`;
         const currentTime = `${String(now.getHours()).padStart(2, '0')}:${String(now.getMinutes()).padStart(2, '0')}`;
 
-        const todays = bookings
-          .filter((b) => b?.bookingStatus === 'confirmed' && b?.slotId?.date === todayStr)
-          .sort((a, b) => (a.slotId?.startTime || '').localeCompare(b.slotId?.startTime || ''));
+        const confirmed = bookings
+          .filter((b) => b?.bookingStatus === 'confirmed' && b?.slotId?.date && b?.slotId?.startTime && b?.slotId?.endTime)
+          .sort((a, b) => {
+            const dateCmp = (a.slotId?.date || '').localeCompare(b.slotId?.date || '');
+            if (dateCmp !== 0) return dateCmp;
+            return (a.slotId?.startTime || '').localeCompare(b.slotId?.startTime || '');
+          });
+
+        const todays = confirmed.filter((b) => b.slotId.date === todayStr);
 
         const inWindow = todays.find((b) => currentTime >= b.slotId.startTime && currentTime <= b.slotId.endTime);
         const upcoming = todays.find((b) => currentTime < b.slotId.endTime);
-        active = inWindow || upcoming || null;
+        const nextFuture = confirmed.find((b) => b.slotId.date > todayStr || (b.slotId.date === todayStr && currentTime < b.slotId.startTime));
+        active = inWindow || upcoming || nextFuture || null;
       }
 
       if (!active) {
-        setError('No active booking found. Please book a slot first.');
+        setError('No confirmed booking found. Please book a slot first.');
         setLoading(false);
         return;
       }
@@ -184,7 +191,7 @@ export default function TestInterface() {
     <div className="min-h-screen flex items-center justify-center" style={{ background: 'var(--bg-primary)' }}>
       <motion.div initial={{ scale: 0.9 }} animate={{ scale: 1 }} className="glass p-10 text-center max-w-md">
         <AlertTriangle size={48} className="mx-auto mb-4" style={{ color: 'var(--accent-amber)' }} />
-        <h2 className="text-xl font-bold mb-3" style={{ color: 'var(--text-primary)' }}>No Active Slot</h2>
+        <h2 className="text-xl font-bold mb-3" style={{ color: 'var(--text-primary)' }}>No Booking Available</h2>
         <p className="mb-6" style={{ color: 'var(--text-secondary)' }}>{error}</p>
         <button onClick={() => navigate('/book-slot')} className="btn-primary px-6 py-2">Book a Slot</button>
       </motion.div>
