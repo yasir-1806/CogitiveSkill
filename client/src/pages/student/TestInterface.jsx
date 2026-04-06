@@ -68,13 +68,34 @@ export default function TestInterface() {
   const fetchActiveBooking = async () => {
     try {
       const res = await api.get('/bookings/active');
-      if (!res.data.activeBooking) {
-        setError('No active booking found. Please book a slot first.');
-        setLoading(false); return;
+      let active = res.data.activeBooking;
+
+      // Fallback: if backend active endpoint returns null, pick today's nearest valid booking from /my.
+      if (!active) {
+        const myRes = await api.get('/bookings/my');
+        const bookings = Array.isArray(myRes.data?.bookings) ? myRes.data.bookings : [];
+        const now = new Date();
+        const todayStr = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}-${String(now.getDate()).padStart(2, '0')}`;
+        const currentTime = `${String(now.getHours()).padStart(2, '0')}:${String(now.getMinutes()).padStart(2, '0')}`;
+
+        const todays = bookings
+          .filter((b) => b?.bookingStatus === 'confirmed' && b?.slotId?.date === todayStr)
+          .sort((a, b) => (a.slotId?.startTime || '').localeCompare(b.slotId?.startTime || ''));
+
+        const inWindow = todays.find((b) => currentTime >= b.slotId.startTime && currentTime <= b.slotId.endTime);
+        const upcoming = todays.find((b) => currentTime < b.slotId.endTime);
+        active = inWindow || upcoming || null;
       }
-      setBooking(res.data.activeBooking);
-      setTimeLeft(res.data.activeBooking.dynamicTimeLimit ?? res.data.activeBooking.levelId.timeLimit);
-      setOriginalLimit(res.data.activeBooking.originalTimeLimit ?? res.data.activeBooking.levelId.timeLimit);
+
+      if (!active) {
+        setError('No active booking found. Please book a slot first.');
+        setLoading(false);
+        return;
+      }
+
+      setBooking(active);
+      setTimeLeft(active.dynamicTimeLimit ?? active.levelId.timeLimit);
+      setOriginalLimit(active.originalTimeLimit ?? active.levelId.timeLimit);
     } catch (e) {
       setError('Could not find an active booking.');
     } finally { setLoading(false); }
