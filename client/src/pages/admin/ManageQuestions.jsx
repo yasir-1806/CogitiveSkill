@@ -53,7 +53,7 @@ export default function ManageQuestions() {
         setAiQuestions(payload.data);
         setAiModalOpen(true);
       } else {
-        alert(payload?.message || 'AI Generation failed');
+        console.error(payload?.message || 'AI Generation failed');
       }
     } finally {
       setGeneratingAi(false);
