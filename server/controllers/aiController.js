@@ -8,7 +8,7 @@ const TestResult = require("../models/TestResult");
 const genAI = new GoogleGenerativeAI(process.env.GEMINI_API_KEY || "");
 
 const MODEL_NAME = process.env.GEMINI_MODEL || "gemini-1.5-flash";
-const MAX_ATTEMPTS = 6;
+const MAX_ATTEMPTS = 10;
 const STOPWORDS = new Set([
   "the", "and", "for", "with", "from", "that", "this", "these", "those",
   "about", "based", "style", "format", "difficulty", "level", "easy", "medium", "hard",
@@ -445,6 +445,7 @@ exports.generateQuestions = async (req, res) => {
     `;
 
     let questionsData = [];
+    const strictCommandMode = Boolean(context && context.trim());
     const hasValidKey = process.env.GEMINI_API_KEY && process.env.GEMINI_API_KEY !== "your_gemini_api_key_here";
 
     let isMock = !hasValidKey;
@@ -471,7 +472,7 @@ exports.generateQuestions = async (req, res) => {
 
         for (let attempt = 1; attempt <= MAX_ATTEMPTS && questionsData.length < safeCount; attempt += 1) {
           const remaining = safeCount - questionsData.length;
-          const requestCount = Math.min(remaining * 3, 30);
+          const requestCount = Math.min(remaining * 4, 40);
           const prompt = buildPrompt(requestCount, avoid.slice(-100));
           console.log(`AI generation attempt ${attempt}/${MAX_ATTEMPTS}: requesting ${requestCount} candidate(s) using ${MODEL_NAME}`);
           const result = await model.generateContent(prompt);
@@ -498,6 +499,38 @@ exports.generateQuestions = async (req, res) => {
             questionsData.push(q);
             avoid.push(q.questionText);
           });
+        }
+
+        // Extra strict top-up pass when user provided explicit commands.
+        if (strictCommandMode && questionsData.length < safeCount) {
+          for (let attempt = 1; attempt <= 4 && questionsData.length < safeCount; attempt += 1) {
+            const remaining = safeCount - questionsData.length;
+            const strictPrompt = `
+              Generate EXACTLY ${remaining} questions.
+              Follow user commands strictly: ${context}
+              Topic: ${topic.topicName}
+              Difficulty: ${level.difficulty}
+              Do not generate any question outside the command scope.
+              Avoid these existing questions:
+              ${existingTexts.slice(-60).join("\n")}
+
+              Return only JSON array with fields:
+              questionText, options(4), correctAnswer(0-3), explanation, points.
+            `;
+            const result = await model.generateContent(strictPrompt);
+            const response = await result.response;
+            const batch = extractJsonArray(response.text());
+            if (!Array.isArray(batch)) continue;
+
+            batch
+              .map((item) => normalizeQuestion(item, safeOptionsCount))
+              .filter(Boolean)
+              .forEach((q) => {
+                if (questionsData.length >= safeCount) return;
+                if (!isQuestionCompliantWithCommands(q, commandKeywords, commandProfile)) return;
+                questionsData.push(q);
+              });
+          }
         }
       } catch (aiError) {
         console.error("AI generation failed. Falling back to mock data. Error:", aiError.message);
@@ -538,7 +571,7 @@ exports.generateQuestions = async (req, res) => {
       return true;
     }) : [];
 
-    if (finalQuestions.length < safeCount) {
+    if (finalQuestions.length < safeCount && !(strictCommandMode && hasValidKey)) {
       const missing = safeCount - finalQuestions.length;
       console.warn(`Generated ${finalQuestions.length}/${safeCount}. Filling ${missing} with structured fallback.`);
       const fallback = generateCommandAwareFallback(
