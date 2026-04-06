@@ -9,6 +9,13 @@ const genAI = new GoogleGenerativeAI(process.env.GEMINI_API_KEY || "");
 
 const MODEL_NAME = process.env.GEMINI_MODEL || "gemini-1.5-flash";
 const MAX_ATTEMPTS = 6;
+const STOPWORDS = new Set([
+  "the", "and", "for", "with", "from", "that", "this", "these", "those",
+  "about", "based", "style", "format", "difficulty", "level", "easy", "medium", "hard",
+  "question", "questions", "generate", "only", "must", "should", "use", "create",
+  "mcq", "mcqs", "options", "option", "answer", "explanation", "topic",
+  "indiabix", "gmat", "cat", "aptitude", "please", "make", "strict", "mode",
+]);
 
 const toKey = (value) =>
   (value || "")
@@ -84,6 +91,38 @@ const uniqueByKey = (items, keyFn) => {
   return out;
 };
 
+const extractCommandKeywords = (context = "", topicName = "") => {
+  const contextTokens = toKey(context)
+    .split(" ")
+    .map((t) => t.trim())
+    .filter(Boolean);
+  const topicTokens = new Set(
+    toKey(topicName)
+      .split(" ")
+      .map((t) => t.trim())
+      .filter(Boolean)
+  );
+
+  const keywords = contextTokens.filter((token) => {
+    if (token.length < 3) return false;
+    if (STOPWORDS.has(token)) return false;
+    if (topicTokens.has(token)) return false;
+    return true;
+  });
+
+  return uniqueByKey(keywords, (k) => k).slice(0, 12);
+};
+
+const isQuestionCompliantWithCommands = (q, commandKeywords) => {
+  if (!commandKeywords.length) return true;
+  const haystack = toKey(
+    `${q.questionText} ${Array.isArray(q.options) ? q.options.join(" ") : ""} ${q.explanation || ""}`
+  );
+  const matched = commandKeywords.filter((kw) => haystack.includes(kw)).length;
+  const requiredMatches = Math.min(2, commandKeywords.length);
+  return matched >= requiredMatches;
+};
+
 const generateAptitudeFallback = (topicName, difficulty, count) => {
   const questions = [];
   let seed = Date.now() % 997;
@@ -156,6 +195,29 @@ const generateAptitudeFallback = (topicName, difficulty, count) => {
   }
 
   return uniqueByKey(questions, (q) => toKey(q.questionText)).slice(0, count);
+};
+
+const generateCommandAwareFallback = (topicName, difficulty, count, commandKeywords = []) => {
+  const base = generateAptitudeFallback(topicName, difficulty, count * 3);
+  if (!commandKeywords.length) return base.slice(0, count);
+
+  const enriched = base.map((q, i) => {
+    const k1 = commandKeywords[i % commandKeywords.length];
+    const k2 = commandKeywords[(i + 1) % commandKeywords.length];
+    return {
+      ...q,
+      questionText: `${q.questionText} (${k1}${k2 ? `, ${k2}` : ""})`,
+      explanation: q.explanation
+        ? `${q.explanation} This item targets: ${k1}${k2 ? `, ${k2}` : ""}.`
+        : `This item targets: ${k1}${k2 ? `, ${k2}` : ""}.`,
+    };
+  });
+
+  return enriched
+    .map((q) => normalizeQuestion(q, 4))
+    .filter(Boolean)
+    .filter((q) => isQuestionCompliantWithCommands(q, commandKeywords))
+    .slice(0, count);
 };
 
 const getCompliantIndexes = async (model, questions, topicName, difficulty, context) => {
@@ -234,6 +296,7 @@ exports.generateQuestions = async (req, res) => {
       : "";
 
     const isIndiaBixRequested = /india\s*bix/i.test(context || "");
+    const commandKeywords = extractCommandKeywords(context, topic.topicName);
     const sourceStyleInstruction = isIndiaBixRequested
       ? `
       7. INDIABIX MODE (STRICT):
@@ -283,7 +346,12 @@ exports.generateQuestions = async (req, res) => {
 
     if (!hasValidKey) {
       console.log("No valid API key found. Using fallback data.");
-      questionsData = generateAptitudeFallback(topic.topicName, level.difficulty, safeCount);
+      questionsData = generateCommandAwareFallback(
+        topic.topicName,
+        level.difficulty,
+        safeCount,
+        commandKeywords
+      );
     } else {
       try {
         const model = genAI.getGenerativeModel({
@@ -320,6 +388,7 @@ exports.generateQuestions = async (req, res) => {
 
           normalizedBatch.forEach((q, idx) => {
             if (!acceptedSet.has(idx)) return;
+            if (!isQuestionCompliantWithCommands(q, commandKeywords)) return;
             questionsData.push(q);
             avoid.push(q.questionText);
           });
@@ -339,6 +408,7 @@ exports.generateQuestions = async (req, res) => {
     const finalQuestions = Array.isArray(questionsData) ? questionsData
     .map((q) => normalizeQuestion(q, safeOptionsCount))
     .filter(Boolean)
+    .filter((q) => isQuestionCompliantWithCommands(q, commandKeywords))
     .filter((q) => {
       const normalizedText = toKey(q.questionText);
       const optionSetKey = q.options.map((opt) => toKey(opt)).sort().join("|");
@@ -359,7 +429,12 @@ exports.generateQuestions = async (req, res) => {
     if (finalQuestions.length < safeCount) {
       const missing = safeCount - finalQuestions.length;
       console.warn(`Generated ${finalQuestions.length}/${safeCount}. Filling ${missing} with structured fallback.`);
-      const fallback = generateAptitudeFallback(topic.topicName, level.difficulty, missing * 2);
+      const fallback = generateCommandAwareFallback(
+        topic.topicName,
+        level.difficulty,
+        missing * 2,
+        commandKeywords
+      );
       const filteredFallback = fallback.filter((q) => {
         const normalizedText = toKey(q.questionText);
         const optionSetKey = q.options.map((opt) => toKey(opt)).sort().join("|");
