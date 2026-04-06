@@ -26,6 +26,16 @@ const extractJsonArray = (text) => {
   return JSON.parse(match[0]);
 };
 
+const extractFirstJson = (text) => {
+  if (!text) return null;
+  const cleaned = text.replace(/```json/gi, "").replace(/```/g, "").trim();
+  const objectMatch = cleaned.match(/\{[\s\S]*\}/);
+  if (objectMatch) return JSON.parse(objectMatch[0]);
+  const arrayMatch = cleaned.match(/\[[\s\S]*\]/);
+  if (arrayMatch) return JSON.parse(arrayMatch[0]);
+  return null;
+};
+
 const normalizeQuestion = (q, optionsCount) => {
   if (!q || typeof q !== "object") return null;
   const questionText = (q.questionText || "").toString().trim();
@@ -148,6 +158,47 @@ const generateAptitudeFallback = (topicName, difficulty, count) => {
   return uniqueByKey(questions, (q) => toKey(q.questionText)).slice(0, count);
 };
 
+const getCompliantIndexes = async (model, questions, topicName, difficulty, context) => {
+  if (!Array.isArray(questions) || !questions.length) return [];
+  if (!context || !context.trim()) return questions.map((_, idx) => idx);
+
+  const checkerPrompt = `
+    You are a strict quality gate for MCQ generation.
+    USER COMMANDS (MUST FOLLOW):
+    ${context}
+
+    Topic: ${topicName}
+    Difficulty: ${difficulty}
+
+    Questions:
+    ${JSON.stringify(questions, null, 2)}
+
+    Return ONLY JSON in this exact format:
+    {"acceptedIndexes":[0,2]}
+
+    Rules:
+    - Include only indexes for questions that clearly follow user commands.
+    - If uncertain, reject the question.
+    - No extra text.
+  `;
+
+  try {
+    const result = await model.generateContent(checkerPrompt);
+    const response = await result.response;
+    const parsed = extractFirstJson(response.text());
+    if (Array.isArray(parsed)) {
+      return parsed.filter((x) => Number.isInteger(x) && x >= 0 && x < questions.length);
+    }
+    if (parsed && Array.isArray(parsed.acceptedIndexes)) {
+      return parsed.acceptedIndexes.filter((x) => Number.isInteger(x) && x >= 0 && x < questions.length);
+    }
+    return [];
+  } catch (err) {
+    console.warn("Compliance checker failed, allowing batch without checker filtering:", err.message);
+    return questions.map((_, idx) => idx);
+  }
+};
+
 /**
  * @desc    Generate questions using AI
  * @route   POST /api/ai/generate-questions
@@ -206,7 +257,8 @@ exports.generateQuestions = async (req, res) => {
       4. Ensure mathematical, technical, and grammatical accuracy.
       5. Do not repeat any question from this avoid list:
          ${avoidQuestionTexts.length ? avoidQuestionTexts.map((q, i) => `${i + 1}. ${q}`).join("\n         ") : "None"}
-      6. Keep questions practical and test-like, not generic theory-only statements.${contextInstruction}
+      6. USER COMMANDS ARE MANDATORY. If a command conflicts with your default style, follow the user command.
+      7. Keep questions practical and test-like, not generic theory-only statements.${contextInstruction}
       7. Never output identical options in a question. Avoid "All of the above" and "None of the above".
       8. Do not repeat the same option set across different questions.
       ${sourceStyleInstruction}
@@ -253,13 +305,24 @@ exports.generateQuestions = async (req, res) => {
           const batch = extractJsonArray(response.text());
           if (!Array.isArray(batch)) continue;
 
-          for (const item of batch) {
-            const normalized = normalizeQuestion(item, safeOptionsCount);
-            if (!normalized) continue;
-            questionsData.push(normalized);
-            avoid.push(normalized.questionText);
-            if (questionsData.length >= safeCount) break;
-          }
+          const normalizedBatch = batch
+            .map((item) => normalizeQuestion(item, safeOptionsCount))
+            .filter(Boolean);
+
+          const acceptedIndexes = await getCompliantIndexes(
+            model,
+            normalizedBatch,
+            topic.topicName,
+            level.difficulty,
+            context
+          );
+          const acceptedSet = new Set(acceptedIndexes);
+
+          normalizedBatch.forEach((q, idx) => {
+            if (!acceptedSet.has(idx)) return;
+            questionsData.push(q);
+            avoid.push(q.questionText);
+          });
         }
       } catch (aiError) {
         console.error("AI generation failed. Falling back to mock data. Error:", aiError.message);
@@ -310,8 +373,10 @@ exports.generateQuestions = async (req, res) => {
       isMock = true;
     }
 
+    const finalCapped = finalQuestions.slice(0, safeCount);
+
     // Add topicId and levelId to each question
-    const questionsToSave = finalQuestions.map(q => ({
+    const questionsToSave = finalCapped.map(q => ({
       ...q,
       topicId,
       levelId,
