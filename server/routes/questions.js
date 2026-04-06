@@ -4,8 +4,8 @@ const { getQuestions, getQuestionsAdmin, addQuestion, updateQuestion, deleteQues
 const { protect } = require('../middleware/auth');
 const { adminOnly } = require('../middleware/role');
 
-router.get('/:levelId', protect, getQuestions);
 router.get('/admin/:levelId', protect, adminOnly, getQuestionsAdmin);
+router.get('/:levelId', protect, getQuestions);
 router.post('/', protect, adminOnly, addQuestion);
 router.put('/:id', protect, adminOnly, updateQuestion);
 router.delete('/:id', protect, adminOnly, deleteQuestion);

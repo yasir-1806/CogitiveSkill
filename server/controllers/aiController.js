@@ -15,6 +15,9 @@ const genAI = new GoogleGenerativeAI(process.env.GEMINI_API_KEY || "");
 exports.generateQuestions = async (req, res) => {
   try {
     const { topicId, levelId, count = 5, optionsCount = 4, context = "" } = req.body;
+    const safeCount = Math.max(1, Math.min(20, Number(count) || 5));
+    // Question schema requires exactly 4 options and correctAnswer 0..3.
+    const safeOptionsCount = 4;
 
     if (!topicId || !levelId) {
       return res.status(400).json({ message: "Topic ID and Level ID are required" });
@@ -34,8 +37,7 @@ exports.generateQuestions = async (req, res) => {
     const existingQuestions = await Question.find({ topicId, levelId, isActive: true }).select('questionText');
     const existingTexts = existingQuestions.map(q => q.questionText || "");
 
-    const MODEL_NAME = "gemini-flash-latest"; // Reverting to the confirmed working model
-    const model = genAI.getGenerativeModel({ model: MODEL_NAME });
+    const MODEL_NAME = process.env.GEMINI_MODEL || "gemini-1.5-flash";
 
     const contextInstruction = context.trim() 
       ? `\n      SPECIFIC USER INSTRUCTIONS:\n      ${context}\n      Please follow these instructions closely while generating the questions.` 
@@ -43,12 +45,12 @@ exports.generateQuestions = async (req, res) => {
 
     const prompt = `
       You are an expert cognitive skill assessment creator.
-      Task: Generate ${count} unique, high-quality multiple-choice questions for a professional assessment.
+      Task: Generate ${safeCount} unique, high-quality multiple-choice questions for a professional assessment.
       Topic: "${topic.topicName}"
       Difficulty: ${level.difficulty} (${level.title || "Standard"})
       
       INSTRUCTIONS FOR QUALITY AND STYLE:
-      1. Each question must have exactly ${optionsCount} options.
+      1. Each question must have exactly ${safeOptionsCount} options.
       2. Options must be logical, distinct, and plausible. Avoid overlapping or ambiguous choices.
       3. Questions must be challenging but fair for the "${level.difficulty}" level.
       4. Ensure mathematical, technical, and grammatical accuracy.
@@ -104,10 +106,11 @@ exports.generateQuestions = async (req, res) => {
 
     if (!hasValidKey) {
       console.log("No valid API key found. Using fallback data.");
-      questionsData = generateMockQuestions(topic.topicName, count, optionsCount, level.difficulty);
+      questionsData = generateMockQuestions(topic.topicName, safeCount, safeOptionsCount, level.difficulty);
     } else {
       try {
-        console.log(`Generating ${count} AI questions for ${topic.topicName} using ${MODEL_NAME}`);
+        console.log(`Generating ${safeCount} AI questions for ${topic.topicName} using ${MODEL_NAME}`);
+        const model = genAI.getGenerativeModel({ model: MODEL_NAME });
         const result = await model.generateContent(prompt);
         const response = await result.response;
         let text = response.text();
@@ -125,7 +128,7 @@ exports.generateQuestions = async (req, res) => {
         }
       } catch (aiError) {
         console.error("AI generation failed. Falling back to mock data. Error:", aiError.message);
-        questionsData = generateMockQuestions(topic.topicName, count, optionsCount, level.difficulty);
+        questionsData = generateMockQuestions(topic.topicName, safeCount, safeOptionsCount, level.difficulty);
         isMock = true;
       }
     }
@@ -136,7 +139,7 @@ exports.generateQuestions = async (req, res) => {
     
     const finalQuestions = Array.isArray(questionsData) ? questionsData.filter(q => {
       if (!q || typeof q !== 'object') return false;
-      if (!q.questionText || !q.options || !Array.isArray(q.options) || q.options.length !== optionsCount) {
+      if (!q.questionText || !q.options || !Array.isArray(q.options) || q.options.length !== safeOptionsCount) {
         console.warn("Skipping malformed question object:", q);
         return false;
       }
@@ -149,12 +152,25 @@ exports.generateQuestions = async (req, res) => {
       
       seenInResponse.add(normalizedText);
       return true;
+    }).map((q) => {
+      const normalizedOptions = q.options.map((opt) => (opt ?? '').toString().trim());
+      const parsedAnswer = Number(q.correctAnswer);
+      const safeAnswer = Number.isInteger(parsedAnswer) && parsedAnswer >= 0 && parsedAnswer < safeOptionsCount ? parsedAnswer : 0;
+      const safePoints = Number(q.points) > 0 ? Number(q.points) : 10;
+
+      return {
+        questionText: q.questionText.toString().trim(),
+        options: normalizedOptions,
+        correctAnswer: safeAnswer,
+        explanation: (q.explanation || '').toString().trim(),
+        points: safePoints,
+      };
     }) : [];
 
     // Safety fallback: if all questions were filtered out, use at least one mock
-    if (finalQuestions.length === 0 && count > 0) {
+    if (finalQuestions.length === 0 && safeCount > 0) {
       console.warn("All generated questions were filtered out as duplicates. Providing one mock question.");
-      finalQuestions.push(...generateMockQuestions(topic.topicName, 1, optionsCount, level.difficulty));
+      finalQuestions.push(...generateMockQuestions(topic.topicName, 1, safeOptionsCount, level.difficulty));
       isMock = true;
     }
 
