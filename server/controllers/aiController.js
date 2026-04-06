@@ -17,6 +17,9 @@ const STOPWORDS = new Set([
   "indiabix", "gmat", "cat", "aptitude", "please", "make", "strict", "mode",
 ]);
 
+const GRAMMAR_CUE_REGEX = /\b(grammar|grammer|sentence|preposition|article|tense|voice|synonym|antonym|spelling|fill in the blank|error detection|choose the correct|choose the best)\b/i;
+const QUANT_CUE_REGEX = /\b(percentage|profit|loss|ratio|time|speed|distance|average|series|algebra|equation|solve|calculate|number)\b/i;
+
 const toKey = (value) =>
   (value || "")
     .toString()
@@ -91,6 +94,19 @@ const uniqueByKey = (items, keyFn) => {
   return out;
 };
 
+const detectCommandProfile = (context = "") => {
+  const normalized = toKey(context);
+  const grammarRequested = /\b(grammar|grammer|english|verbal|preposition|article|tense|voice|synonym|antonym|spelling)\b/.test(normalized);
+  const quantRequested = /\b(quant|math|aptitude|percentage|profit|loss|ratio|time|speed|distance|series|equation|problem solving)\b/.test(normalized);
+
+  let mode = "general";
+  if (grammarRequested && !quantRequested) mode = "grammar";
+  else if (quantRequested && !grammarRequested) mode = "quant";
+  else if (grammarRequested && quantRequested) mode = "mixed";
+
+  return { mode, grammarRequested, quantRequested };
+};
+
 const extractCommandKeywords = (context = "", topicName = "") => {
   const contextTokens = toKey(context)
     .split(" ")
@@ -113,13 +129,26 @@ const extractCommandKeywords = (context = "", topicName = "") => {
   return uniqueByKey(keywords, (k) => k).slice(0, 12);
 };
 
-const isQuestionCompliantWithCommands = (q, commandKeywords) => {
+const isQuestionCompliantWithCommands = (q, commandKeywords, profile = { mode: "general" }) => {
+  const raw = `${q.questionText} ${Array.isArray(q.options) ? q.options.join(" ") : ""} ${q.explanation || ""}`;
+  const haystack = toKey(raw);
+
+  // Hard mode filters
+  if (profile.mode === "grammar") {
+    const hasGrammarCue = GRAMMAR_CUE_REGEX.test(raw);
+    const hasQuantCue = QUANT_CUE_REGEX.test(raw) || /[\d+\-*/%=]/.test(raw);
+    if (!hasGrammarCue) return false;
+    if (hasQuantCue) return false;
+  }
+
+  if (profile.mode === "quant") {
+    const hasQuantCue = QUANT_CUE_REGEX.test(raw) || /[\d+\-*/%=]/.test(raw);
+    if (!hasQuantCue) return false;
+  }
+
   if (!commandKeywords.length) return true;
-  const haystack = toKey(
-    `${q.questionText} ${Array.isArray(q.options) ? q.options.join(" ") : ""} ${q.explanation || ""}`
-  );
   const matched = commandKeywords.filter((kw) => haystack.includes(kw)).length;
-  const requiredMatches = Math.min(2, commandKeywords.length);
+  const requiredMatches = profile.mode === "general" ? Math.min(2, commandKeywords.length) : Math.min(1, commandKeywords.length);
   return matched >= requiredMatches;
 };
 
@@ -197,8 +226,70 @@ const generateAptitudeFallback = (topicName, difficulty, count) => {
   return uniqueByKey(questions, (q) => toKey(q.questionText)).slice(0, count);
 };
 
-const generateCommandAwareFallback = (topicName, difficulty, count, commandKeywords = []) => {
-  const base = generateAptitudeFallback(topicName, difficulty, count * 3);
+const generateGrammarFallback = (topicName, difficulty, count) => {
+  const samples = [
+    {
+      questionText: `Choose the correct sentence.`,
+      options: [
+        "She does not likes coffee.",
+        "She do not like coffee.",
+        "She does not like coffee.",
+        "She not likes coffee.",
+      ],
+      correctAnswer: 2,
+      explanation: "With 'does', base verb form is used: 'like'.",
+      points: 10,
+    },
+    {
+      questionText: `Fill in the blank: He is good ___ mathematics.`,
+      options: ["in", "at", "on", "for"],
+      correctAnswer: 1,
+      explanation: "The correct preposition is 'at'.",
+      points: 10,
+    },
+    {
+      questionText: `Identify the sentence with correct subject-verb agreement.`,
+      options: [
+        "The list of items are on the desk.",
+        "The list of items is on the desk.",
+        "The list of items were on the desk.",
+        "The list of items be on the desk.",
+      ],
+      correctAnswer: 1,
+      explanation: "The subject 'list' is singular, so 'is' is correct.",
+      points: 10,
+    },
+    {
+      questionText: `Choose the correct article usage: ___ honest person always speaks the truth.`,
+      options: ["A", "An", "The", "No article"],
+      correctAnswer: 1,
+      explanation: "'Honest' starts with a vowel sound, so 'An' is correct.",
+      points: 10,
+    },
+    {
+      questionText: `Select the best synonym of "brief".`,
+      options: ["Lengthy", "Short", "Noisy", "Complex"],
+      correctAnswer: 1,
+      explanation: "'Brief' means short in duration or length.",
+      points: 10,
+    },
+  ];
+
+  const out = [];
+  for (let i = 0; i < count; i += 1) {
+    const base = samples[i % samples.length];
+    out.push({
+      ...base,
+      questionText: `${base.questionText} (${topicName} - ${difficulty} set ${Math.floor(i / samples.length) + 1})`,
+    });
+  }
+  return out.map((q) => normalizeQuestion(q, 4)).filter(Boolean);
+};
+
+const generateCommandAwareFallback = (topicName, difficulty, count, commandKeywords = [], profile = { mode: "general" }) => {
+  const base = profile.mode === "grammar"
+    ? generateGrammarFallback(topicName, difficulty, count * 3)
+    : generateAptitudeFallback(topicName, difficulty, count * 3);
   if (!commandKeywords.length) return base.slice(0, count);
 
   const enriched = base.map((q, i) => {
@@ -216,7 +307,7 @@ const generateCommandAwareFallback = (topicName, difficulty, count, commandKeywo
   return enriched
     .map((q) => normalizeQuestion(q, 4))
     .filter(Boolean)
-    .filter((q) => isQuestionCompliantWithCommands(q, commandKeywords))
+    .filter((q) => isQuestionCompliantWithCommands(q, commandKeywords, profile))
     .slice(0, count);
 };
 
@@ -296,6 +387,7 @@ exports.generateQuestions = async (req, res) => {
       : "";
 
     const isIndiaBixRequested = /india\s*bix/i.test(context || "");
+    const commandProfile = detectCommandProfile(context);
     const commandKeywords = extractCommandKeywords(context, topic.topicName);
     const sourceStyleInstruction = isIndiaBixRequested
       ? `
@@ -304,6 +396,18 @@ exports.generateQuestions = async (req, res) => {
          - Use practical exam-style wording with concrete values, not generic theory statements.
          - Every question and option set must be different from each other.
          - Do NOT copy exact published IndiaBIX questions verbatim; generate original questions in that style.
+      `
+      : "";
+
+    const modeInstruction = commandProfile.mode === "grammar"
+      ? `
+      9. STRICT MODE: Generate ONLY English grammar/verbal questions.
+      10. DO NOT generate arithmetic, quantitative aptitude, number-series, or problem-solving math questions.
+      `
+      : commandProfile.mode === "quant"
+      ? `
+      9. STRICT MODE: Generate ONLY quantitative/problem-solving aptitude questions.
+      10. Include numeric reasoning and avoid pure grammar/verbal-only questions.
       `
       : "";
 
@@ -324,6 +428,7 @@ exports.generateQuestions = async (req, res) => {
       7. Keep questions practical and test-like, not generic theory-only statements.${contextInstruction}
       7. Never output identical options in a question. Avoid "All of the above" and "None of the above".
       8. Do not repeat the same option set across different questions.
+      ${modeInstruction}
       ${sourceStyleInstruction}
 
       RESPONSE FORMAT:
@@ -350,7 +455,8 @@ exports.generateQuestions = async (req, res) => {
         topic.topicName,
         level.difficulty,
         safeCount,
-        commandKeywords
+        commandKeywords,
+        commandProfile
       );
     } else {
       try {
@@ -388,14 +494,20 @@ exports.generateQuestions = async (req, res) => {
 
           normalizedBatch.forEach((q, idx) => {
             if (!acceptedSet.has(idx)) return;
-            if (!isQuestionCompliantWithCommands(q, commandKeywords)) return;
+            if (!isQuestionCompliantWithCommands(q, commandKeywords, commandProfile)) return;
             questionsData.push(q);
             avoid.push(q.questionText);
           });
         }
       } catch (aiError) {
         console.error("AI generation failed. Falling back to mock data. Error:", aiError.message);
-        questionsData = generateAptitudeFallback(topic.topicName, level.difficulty, safeCount);
+        questionsData = generateCommandAwareFallback(
+          topic.topicName,
+          level.difficulty,
+          safeCount,
+          commandKeywords,
+          commandProfile
+        );
         isMock = true;
       }
     }
@@ -408,7 +520,7 @@ exports.generateQuestions = async (req, res) => {
     const finalQuestions = Array.isArray(questionsData) ? questionsData
     .map((q) => normalizeQuestion(q, safeOptionsCount))
     .filter(Boolean)
-    .filter((q) => isQuestionCompliantWithCommands(q, commandKeywords))
+    .filter((q) => isQuestionCompliantWithCommands(q, commandKeywords, commandProfile))
     .filter((q) => {
       const normalizedText = toKey(q.questionText);
       const optionSetKey = q.options.map((opt) => toKey(opt)).sort().join("|");
@@ -433,7 +545,8 @@ exports.generateQuestions = async (req, res) => {
         topic.topicName,
         level.difficulty,
         missing * 2,
-        commandKeywords
+        commandKeywords,
+        commandProfile
       );
       const filteredFallback = fallback.filter((q) => {
         const normalizedText = toKey(q.questionText);
