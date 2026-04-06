@@ -1,11 +1,12 @@
 import { useEffect, useState, useRef } from 'react';
-import { useNavigate } from 'react-router-dom';
+import { useNavigate, useSearchParams } from 'react-router-dom';
 import { motion, AnimatePresence } from 'framer-motion';
 import { Clock, ChevronLeft, ChevronRight, AlertTriangle, Send, PlayCircle, Target } from 'lucide-react';
 import api from '../../services/api';
 
 export default function TestInterface() {
   const navigate = useNavigate();
+  const [searchParams] = useSearchParams();
   const [booking, setBooking] = useState(null);
   const [questions, setQuestions] = useState([]);
   const [current, setCurrent] = useState(0);
@@ -67,6 +68,29 @@ export default function TestInterface() {
 
   const fetchActiveBooking = async () => {
     try {
+      const requestedBookingId = searchParams.get('bookingId');
+
+      if (requestedBookingId) {
+        const myRes = await api.get('/bookings/my');
+        const bookings = Array.isArray(myRes.data?.bookings) ? myRes.data.bookings : [];
+        const matched = bookings.find((b) => b?._id === requestedBookingId);
+
+        if (matched) {
+          const now = new Date();
+          const todayStr = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}-${String(now.getDate()).padStart(2, '0')}`;
+          const currentTime = `${String(now.getHours()).padStart(2, '0')}:${String(now.getMinutes()).padStart(2, '0')}`;
+          const isToday = matched?.slotId?.date === todayStr;
+          const isNotEnded = matched?.slotId?.endTime >= currentTime;
+
+          if (isToday && isNotEnded) {
+            setBooking(matched);
+            setTimeLeft(matched.levelId.timeLimit);
+            setOriginalLimit(matched.levelId.timeLimit);
+            return;
+          }
+        }
+      }
+
       const res = await api.get('/bookings/active');
       let active = res.data.activeBooking;
 
