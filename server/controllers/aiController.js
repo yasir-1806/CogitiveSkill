@@ -8,7 +8,7 @@ const TestResult = require("../models/TestResult");
 const genAI = new GoogleGenerativeAI(process.env.GEMINI_API_KEY || "");
 
 const MODEL_NAME = process.env.GEMINI_MODEL || "gemini-1.5-flash";
-const MAX_ATTEMPTS = 3;
+const MAX_ATTEMPTS = 6;
 
 const toKey = (value) =>
   (value || "")
@@ -51,6 +51,101 @@ const normalizeQuestion = (q, optionsCount) => {
     explanation,
     points,
   };
+};
+
+const shuffle = (arr) => {
+  const copy = [...arr];
+  for (let i = copy.length - 1; i > 0; i -= 1) {
+    const j = Math.floor(Math.random() * (i + 1));
+    [copy[i], copy[j]] = [copy[j], copy[i]];
+  }
+  return copy;
+};
+
+const uniqueByKey = (items, keyFn) => {
+  const seen = new Set();
+  const out = [];
+  for (const item of items) {
+    const key = keyFn(item);
+    if (seen.has(key)) continue;
+    seen.add(key);
+    out.push(item);
+  }
+  return out;
+};
+
+const generateAptitudeFallback = (topicName, difficulty, count) => {
+  const questions = [];
+  let seed = Date.now() % 997;
+
+  const rand = (min, max) => {
+    seed = (seed * 37 + 11) % 10007;
+    return min + (seed % (max - min + 1));
+  };
+
+  const add = (q) => {
+    const normalized = normalizeQuestion(q, 4);
+    if (normalized) questions.push(normalized);
+  };
+
+  for (let i = 0; i < count * 3 && questions.length < count; i += 1) {
+    const type = i % 4;
+    if (type === 0) {
+      const a = rand(12, 85);
+      const b = rand(6, 40);
+      const ans = a + b;
+      const opts = shuffle([ans, ans + 2, ans - 3, ans + 5]);
+      add({
+        questionText: `In an ${difficulty} ${topicName} test, what is ${a} + ${b}?`,
+        options: opts.map(String),
+        correctAnswer: opts.indexOf(ans),
+        explanation: `Adding ${a} and ${b} gives ${ans}.`,
+        points: 10,
+      });
+    } else if (type === 1) {
+      const start = rand(2, 8);
+      const d = rand(3, 9);
+      const n1 = start;
+      const n2 = start + d;
+      const n3 = n2 + d;
+      const n4 = n3 + d;
+      const ans = n4 + d;
+      const opts = shuffle([ans, ans + d, ans - d, ans + 2 * d]);
+      add({
+        questionText: `Find the next number in the sequence: ${n1}, ${n2}, ${n3}, ${n4}, ?`,
+        options: opts.map(String),
+        correctAnswer: opts.indexOf(ans),
+        explanation: `This is an arithmetic progression with common difference ${d}.`,
+        points: 10,
+      });
+    } else if (type === 2) {
+      const p = rand(10, 35);
+      const base = rand(120, 420);
+      const ans = Math.round((p * base) / 100);
+      const opts = shuffle([ans, ans + 6, ans - 4, ans + 10]);
+      add({
+        questionText: `What is ${p}% of ${base}?`,
+        options: opts.map(String),
+        correctAnswer: opts.indexOf(ans),
+        explanation: `${p}% of ${base} is (${p}/${100}) x ${base} = ${ans}.`,
+        points: 10,
+      });
+    } else {
+      const speed = rand(30, 90);
+      const time = rand(2, 6);
+      const ans = speed * time;
+      const opts = shuffle([ans, ans + speed, ans - speed, ans + 2 * speed]);
+      add({
+        questionText: `A vehicle travels at ${speed} km/h for ${time} hours. What distance does it cover?`,
+        options: opts.map((x) => `${x} km`),
+        correctAnswer: opts.indexOf(ans),
+        explanation: `Distance = Speed x Time = ${speed} x ${time} = ${ans} km.`,
+        points: 10,
+      });
+    }
+  }
+
+  return uniqueByKey(questions, (q) => toKey(q.questionText)).slice(0, count);
 };
 
 /**
@@ -112,6 +207,8 @@ exports.generateQuestions = async (req, res) => {
       5. Do not repeat any question from this avoid list:
          ${avoidQuestionTexts.length ? avoidQuestionTexts.map((q, i) => `${i + 1}. ${q}`).join("\n         ") : "None"}
       6. Keep questions practical and test-like, not generic theory-only statements.${contextInstruction}
+      7. Never output identical options in a question. Avoid "All of the above" and "None of the above".
+      8. Do not repeat the same option set across different questions.
       ${sourceStyleInstruction}
 
       RESPONSE FORMAT:
@@ -127,34 +224,6 @@ exports.generateQuestions = async (req, res) => {
       ]
     `;
 
-    // Helper to generate mock questions (used as fallback)
-    const generateMockQuestions = (topicName, count, optionsCount, difficulty) => {
-      const sampleQuestions = [
-        { q: `Which concept is most central to ${topicName} at a ${difficulty} level?`, exp: `${topicName} requires mastery of core concepts.` },
-        { q: `What is a common pitfall when implementing ${topicName} strategies?`, exp: `Identifying errors is key to ${topicName} proficiency.` },
-        { q: `How does ${topicName} interact with related structural patterns?`, exp: `Structural understanding is fundamental for ${difficulty} level.` },
-        { q: `Under which condition would ${topicName} be considered the optimal approach?`, exp: `Contextual application is a hallmark of skill.` },
-        { q: `Evaluate the role of historical development in modern ${topicName}.`, exp: `Historical context deepens understanding.` },
-      ];
-      return Array.from({ length: count }).map((_, i) => {
-        const sample = sampleQuestions[i % sampleQuestions.length];
-        const correctIdx = Math.floor(Math.random() * optionsCount);
-        
-        const options = Array.from({ length: optionsCount }).map((_, oi) => {
-          if (oi === correctIdx) return `The primary application of ${topicName} in a ${difficulty} environment.`;
-          return `A secondary or outdated method for ${topicName} (${oi + 1})`;
-        });
-
-        return {
-          questionText: sample.q,
-          options: options,
-          correctAnswer: correctIdx,
-          explanation: sample.exp,
-          points: 10
-        };
-      });
-    };
-
     let questionsData = [];
     const hasValidKey = process.env.GEMINI_API_KEY && process.env.GEMINI_API_KEY !== "your_gemini_api_key_here";
 
@@ -162,16 +231,23 @@ exports.generateQuestions = async (req, res) => {
 
     if (!hasValidKey) {
       console.log("No valid API key found. Using fallback data.");
-      questionsData = generateMockQuestions(topic.topicName, safeCount, safeOptionsCount, level.difficulty);
+      questionsData = generateAptitudeFallback(topic.topicName, level.difficulty, safeCount);
     } else {
       try {
-        const model = genAI.getGenerativeModel({ model: MODEL_NAME });
+        const model = genAI.getGenerativeModel({
+          model: MODEL_NAME,
+          generationConfig: {
+            temperature: 1,
+            topP: 0.95,
+          },
+        });
         const avoid = [...existingTexts];
 
         for (let attempt = 1; attempt <= MAX_ATTEMPTS && questionsData.length < safeCount; attempt += 1) {
           const remaining = safeCount - questionsData.length;
-          const prompt = buildPrompt(remaining, avoid);
-          console.log(`AI generation attempt ${attempt}/${MAX_ATTEMPTS}: requesting ${remaining} question(s) using ${MODEL_NAME}`);
+          const requestCount = Math.min(remaining * 3, 30);
+          const prompt = buildPrompt(requestCount, avoid.slice(-100));
+          console.log(`AI generation attempt ${attempt}/${MAX_ATTEMPTS}: requesting ${requestCount} candidate(s) using ${MODEL_NAME}`);
           const result = await model.generateContent(prompt);
           const response = await result.response;
           const batch = extractJsonArray(response.text());
@@ -187,7 +263,7 @@ exports.generateQuestions = async (req, res) => {
         }
       } catch (aiError) {
         console.error("AI generation failed. Falling back to mock data. Error:", aiError.message);
-        questionsData = generateMockQuestions(topic.topicName, safeCount, safeOptionsCount, level.difficulty);
+        questionsData = generateAptitudeFallback(topic.topicName, level.difficulty, safeCount);
         isMock = true;
       }
     }
@@ -217,23 +293,20 @@ exports.generateQuestions = async (req, res) => {
       return true;
     }) : [];
 
-    // If API key is valid, do not silently fill with repetitive fallback.
-    // Return a clear message so the admin can retry with refined context.
-    if (hasValidKey && finalQuestions.length < safeCount) {
-      return res.status(422).json({
-        success: false,
-        message: `Generated ${finalQuestions.length}/${safeCount} high-quality unique questions. Please retry or refine context.`,
-        count: finalQuestions.length,
-        data: finalQuestions.map((q) => ({ ...q, topicId, levelId, isActive: true })),
-        isMock: false,
-      });
-    }
-
-    // Fallback only when no valid API key is available.
-    if (!hasValidKey && finalQuestions.length < safeCount) {
+    if (finalQuestions.length < safeCount) {
       const missing = safeCount - finalQuestions.length;
-      console.warn(`Generated ${finalQuestions.length}/${safeCount}. Filling ${missing} question(s) with fallback.`);
-      finalQuestions.push(...generateMockQuestions(topic.topicName, missing, safeOptionsCount, level.difficulty));
+      console.warn(`Generated ${finalQuestions.length}/${safeCount}. Filling ${missing} with structured fallback.`);
+      const fallback = generateAptitudeFallback(topic.topicName, level.difficulty, missing * 2);
+      const filteredFallback = fallback.filter((q) => {
+        const normalizedText = toKey(q.questionText);
+        const optionSetKey = q.options.map((opt) => toKey(opt)).sort().join("|");
+        if (existingTextsSet.has(normalizedText) || seenInResponse.has(normalizedText)) return false;
+        if (seenOptionSets.has(optionSetKey)) return false;
+        seenInResponse.add(normalizedText);
+        seenOptionSets.add(optionSetKey);
+        return true;
+      }).slice(0, missing);
+      finalQuestions.push(...filteredFallback);
       isMock = true;
     }
 
