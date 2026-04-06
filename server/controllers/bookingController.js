@@ -7,18 +7,24 @@ const Topic = require('../models/Topic');
 const APP_TIMEZONE = process.env.APP_TIMEZONE || 'Asia/Kolkata';
 const getNowParts = () => {
   const now = new Date();
-  const date = new Intl.DateTimeFormat('en-CA', {
+  const dateParts = new Intl.DateTimeFormat('en-CA', {
     timeZone: APP_TIMEZONE,
     year: 'numeric',
     month: '2-digit',
     day: '2-digit',
-  }).format(now);
-  const time = new Intl.DateTimeFormat('en-GB', {
+  }).formatToParts(now);
+  const getPart = (type) => dateParts.find((p) => p.type === type)?.value || '';
+  const date = `${getPart('year')}-${getPart('month')}-${getPart('day')}`;
+
+  const timeParts = new Intl.DateTimeFormat('en-GB', {
     timeZone: APP_TIMEZONE,
     hour: '2-digit',
     minute: '2-digit',
     hour12: false,
-  }).format(now);
+  }).formatToParts(now);
+  const hh = timeParts.find((p) => p.type === 'hour')?.value || '00';
+  const mm = timeParts.find((p) => p.type === 'minute')?.value || '00';
+  const time = `${hh}:${mm}`;
   return { now, todayStr: date, currentTime: time };
 };
 
@@ -116,15 +122,18 @@ const getActiveBooking = async (req, res) => {
       .populate('topicId', 'topicName icon color')
       .populate('levelId', 'levelNumber difficulty title timeLimit passingScore');
 
-    const activeBooking = bookings.find(b => {
+    // Prefer an in-window booking, but also allow today's upcoming booking so /test page can open.
+    const todaysBookings = bookings
+      .filter((b) => b.slotId && b.slotId.date === todayStr)
+      .sort((a, b) => a.slotId.startTime.localeCompare(b.slotId.startTime));
+
+    const inWindowBooking = todaysBookings.find((b) => {
       const slot = b.slotId;
-      if (!slot) return false;
-      const isToday = slot.date === todayStr;
       const isWithinTime = currentTime >= slot.startTime && currentTime <= slot.endTime;
-      // Allow opening test lobby during slot window even if attendance is not yet verified.
-      // Actual test start permission is enforced in /api/tests/start.
-      return isToday && isWithinTime;
+      return isWithinTime;
     });
+    const upcomingTodayBooking = todaysBookings.find((b) => currentTime < b.slotId.endTime);
+    const activeBooking = inWindowBooking || upcomingTodayBooking || null;
 
     if (activeBooking) {
       const slot = activeBooking.slotId;

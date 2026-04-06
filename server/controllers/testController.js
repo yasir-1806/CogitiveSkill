@@ -8,18 +8,24 @@ const Level = require('../models/Level');
 const APP_TIMEZONE = process.env.APP_TIMEZONE || 'Asia/Kolkata';
 const getNowParts = () => {
   const now = new Date();
-  const date = new Intl.DateTimeFormat('en-CA', {
+  const dateParts = new Intl.DateTimeFormat('en-CA', {
     timeZone: APP_TIMEZONE,
     year: 'numeric',
     month: '2-digit',
     day: '2-digit',
-  }).format(now);
-  const time = new Intl.DateTimeFormat('en-GB', {
+  }).formatToParts(now);
+  const getPart = (type) => dateParts.find((p) => p.type === type)?.value || '';
+  const date = `${getPart('year')}-${getPart('month')}-${getPart('day')}`;
+
+  const timeParts = new Intl.DateTimeFormat('en-GB', {
     timeZone: APP_TIMEZONE,
     hour: '2-digit',
     minute: '2-digit',
     hour12: false,
-  }).format(now);
+  }).formatToParts(now);
+  const hh = timeParts.find((p) => p.type === 'hour')?.value || '00';
+  const mm = timeParts.find((p) => p.type === 'minute')?.value || '00';
+  const time = `${hh}:${mm}`;
   return { now, todayStr: date, currentTime: time };
 };
 
