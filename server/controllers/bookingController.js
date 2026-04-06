@@ -107,7 +107,9 @@ const getActiveBooking = async (req, res) => {
       if (!slot) return false;
       const isToday = slot.date === todayStr;
       const isWithinTime = currentTime >= slot.startTime && currentTime <= slot.endTime;
-      return isToday && isWithinTime && b.isPresent === true;
+      // Allow opening test lobby during slot window even if attendance is not yet verified.
+      // Actual test start permission is enforced in /api/tests/start.
+      return isToday && isWithinTime;
     });
 
     if (activeBooking) {
