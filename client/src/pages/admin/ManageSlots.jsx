@@ -113,15 +113,7 @@ export default function ManageSlots() {
 
       {/* Slots grid */}
       <div className="grid sm:grid-cols-2 lg:grid-cols-4 gap-4">
-        {slots.filter(slot => {
-          const now = new Date();
-          const today = format(now, 'yyyy-MM-dd');
-          const time = format(now, 'HH:mm');
-          if (slot.date === today) {
-            return slot.endTime >= time; // Keep active slots visible
-          }
-          return true;
-        }).map((slot, i) => {
+        {slots.map((slot, i) => {
           const booked = slot.bookedStudents?.length || 0;
           const pct = Math.round((booked / slot.maxStudents) * 100);
           return (
