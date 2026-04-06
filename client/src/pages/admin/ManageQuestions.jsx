@@ -51,7 +51,14 @@ export default function ManageQuestions() {
       }
       setAiModalOpen(true);
     } catch (e) {
-      alert(e.response?.data?.message || 'AI Generation failed');
+      const payload = e.response?.data;
+      if (payload?.data?.length) {
+        setAiQuestions(payload.data);
+        setAiModalOpen(true);
+        alert(payload.message || 'Only partial high-quality questions were generated. Review and save what is useful.');
+      } else {
+        alert(payload?.message || 'AI Generation failed');
+      }
     } finally {
       setGeneratingAi(false);
     }

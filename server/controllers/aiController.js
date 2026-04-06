@@ -10,6 +10,14 @@ const genAI = new GoogleGenerativeAI(process.env.GEMINI_API_KEY || "");
 const MODEL_NAME = process.env.GEMINI_MODEL || "gemini-1.5-flash";
 const MAX_ATTEMPTS = 3;
 
+const toKey = (value) =>
+  (value || "")
+    .toString()
+    .toLowerCase()
+    .replace(/[^a-z0-9\s]/g, " ")
+    .replace(/\s+/g, " ")
+    .trim();
+
 const extractJsonArray = (text) => {
   if (!text) return [];
   const cleaned = text.replace(/```json/gi, "").replace(/```/g, "").trim();
@@ -30,8 +38,11 @@ const normalizeQuestion = (q, optionsCount) => {
   if (!questionText || questionText.length < 12) return null;
   if (options.length !== optionsCount) return null;
   if (options.some((opt) => !opt || opt.length < 1)) return null;
-  if (new Set(options.map((opt) => opt.toLowerCase())).size !== optionsCount) return null;
+  if (new Set(options.map((opt) => toKey(opt))).size !== optionsCount) return null;
   if (!Number.isInteger(correctAnswer) || correctAnswer < 0 || correctAnswer >= optionsCount) return null;
+  if (questionText.toLowerCase().includes("which concept is most central")) return null;
+  if (questionText.toLowerCase().includes("common pitfall when implementing")) return null;
+  if (options.every((opt) => opt.length < 3)) return null;
 
   return {
     questionText,
@@ -76,6 +87,17 @@ exports.generateQuestions = async (req, res) => {
       ? `\n      SPECIFIC USER INSTRUCTIONS:\n      ${context}\n      Please follow these instructions closely while generating the questions.` 
       : "";
 
+    const isIndiaBixRequested = /india\s*bix/i.test(context || "");
+    const sourceStyleInstruction = isIndiaBixRequested
+      ? `
+      7. INDIABIX MODE (STRICT):
+         - Match the style of IndiaBIX aptitude/logical/verbal MCQs.
+         - Use practical exam-style wording with concrete values, not generic theory statements.
+         - Every question and option set must be different from each other.
+         - Do NOT copy exact published IndiaBIX questions verbatim; generate original questions in that style.
+      `
+      : "";
+
     const buildPrompt = (requiredCount, avoidQuestionTexts = []) => `
       You are an expert cognitive skill assessment creator.
       Task: Generate ${requiredCount} unique, high-quality multiple-choice questions for a professional assessment.
@@ -90,6 +112,7 @@ exports.generateQuestions = async (req, res) => {
       5. Do not repeat any question from this avoid list:
          ${avoidQuestionTexts.length ? avoidQuestionTexts.map((q, i) => `${i + 1}. ${q}`).join("\n         ") : "None"}
       6. Keep questions practical and test-like, not generic theory-only statements.${contextInstruction}
+      ${sourceStyleInstruction}
 
       RESPONSE FORMAT:
       Return ONLY a valid JSON array. No markdown or extra text.
@@ -170,25 +193,44 @@ exports.generateQuestions = async (req, res) => {
     }
 
     // Final deduplication (both against existing questions and intra-set)
-    const existingTextsSet = new Set(existingTexts.filter(t => t).map(t => t.toLowerCase().trim()));
+    const existingTextsSet = new Set(existingTexts.filter(t => t).map(t => toKey(t)));
+    const seenOptionSets = new Set();
     const seenInResponse = new Set();
     
     const finalQuestions = Array.isArray(questionsData) ? questionsData
     .map((q) => normalizeQuestion(q, safeOptionsCount))
     .filter(Boolean)
     .filter((q) => {
-      const normalizedText = q.questionText.toLowerCase().trim();
+      const normalizedText = toKey(q.questionText);
+      const optionSetKey = q.options.map((opt) => toKey(opt)).sort().join("|");
       if (existingTextsSet.has(normalizedText) || seenInResponse.has(normalizedText)) {
         console.log(`Skipping duplicate question: ${q.questionText}`);
         return false;
       }
+      if (seenOptionSets.has(optionSetKey)) {
+        console.log(`Skipping duplicate option set for question: ${q.questionText}`);
+        return false;
+      }
       
       seenInResponse.add(normalizedText);
+      seenOptionSets.add(optionSetKey);
       return true;
     }) : [];
 
-    // Safety fallback: if all questions were filtered out, use at least one mock
-    if (finalQuestions.length < safeCount) {
+    // If API key is valid, do not silently fill with repetitive fallback.
+    // Return a clear message so the admin can retry with refined context.
+    if (hasValidKey && finalQuestions.length < safeCount) {
+      return res.status(422).json({
+        success: false,
+        message: `Generated ${finalQuestions.length}/${safeCount} high-quality unique questions. Please retry or refine context.`,
+        count: finalQuestions.length,
+        data: finalQuestions.map((q) => ({ ...q, topicId, levelId, isActive: true })),
+        isMock: false,
+      });
+    }
+
+    // Fallback only when no valid API key is available.
+    if (!hasValidKey && finalQuestions.length < safeCount) {
       const missing = safeCount - finalQuestions.length;
       console.warn(`Generated ${finalQuestions.length}/${safeCount}. Filling ${missing} question(s) with fallback.`);
       finalQuestions.push(...generateMockQuestions(topic.topicName, missing, safeOptionsCount, level.difficulty));
