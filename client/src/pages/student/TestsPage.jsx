@@ -65,7 +65,11 @@ export default function TestsPage() {
         if (isStarted && !isEnded) {
           return (
             <div className="flex flex-col gap-2 mt-2">
-              <Link to={`/test?bookingId=${booking._id}`} className="btn-primary w-full flex justify-center items-center gap-2 py-2 shadow-[0_4px_15px_rgba(168,85,247,0.3)]">
+              <Link
+                to={`/test?bookingId=${booking._id}`}
+                state={{ booking }}
+                className="btn-primary w-full flex justify-center items-center gap-2 py-2 shadow-[0_4px_15px_rgba(168,85,247,0.3)]"
+              >
                 <PlayCircle size={18} /> Enter Test Now
               </Link>
               {!booking.isPresent && (

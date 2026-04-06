@@ -1,11 +1,12 @@
 import { useEffect, useState, useRef } from 'react';
-import { useNavigate, useSearchParams } from 'react-router-dom';
+import { useLocation, useNavigate, useSearchParams } from 'react-router-dom';
 import { motion, AnimatePresence } from 'framer-motion';
 import { Clock, ChevronLeft, ChevronRight, AlertTriangle, Send, PlayCircle, Target } from 'lucide-react';
 import api from '../../services/api';
 
 export default function TestInterface() {
   const navigate = useNavigate();
+  const location = useLocation();
   const [searchParams] = useSearchParams();
   const [booking, setBooking] = useState(null);
   const [questions, setQuestions] = useState([]);
@@ -68,6 +69,14 @@ export default function TestInterface() {
 
   const fetchActiveBooking = async () => {
     try {
+      const passedBooking = location.state?.booking;
+      if (passedBooking?._id && passedBooking?.slotId && passedBooking?.levelId) {
+        setBooking(passedBooking);
+        setTimeLeft(passedBooking.levelId.timeLimit ?? 600);
+        setOriginalLimit(passedBooking.levelId.timeLimit ?? 600);
+        return;
+      }
+
       const requestedBookingId = searchParams.get('bookingId');
 
       if (requestedBookingId) {
@@ -76,18 +85,10 @@ export default function TestInterface() {
         const matched = bookings.find((b) => b?._id === requestedBookingId);
 
         if (matched) {
-          const now = new Date();
-          const todayStr = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}-${String(now.getDate()).padStart(2, '0')}`;
-          const currentTime = `${String(now.getHours()).padStart(2, '0')}:${String(now.getMinutes()).padStart(2, '0')}`;
-          const isToday = matched?.slotId?.date === todayStr;
-          const isNotEnded = matched?.slotId?.endTime >= currentTime;
-
-          if (isToday && isNotEnded) {
-            setBooking(matched);
-            setTimeLeft(matched.levelId.timeLimit);
-            setOriginalLimit(matched.levelId.timeLimit);
-            return;
-          }
+          setBooking(matched);
+          setTimeLeft(matched.levelId?.timeLimit ?? 600);
+          setOriginalLimit(matched.levelId?.timeLimit ?? 600);
+          return;
         }
       }
 
