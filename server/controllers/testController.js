@@ -61,11 +61,25 @@ const startTest = async (req, res) => {
     }
 
     // Fetch the actual question details for the selected IDs
-    const questions = await Question.find({ _id: { $in: booking.questions } })
-      .select('-correctAnswer -__v');
+    const questions = await Question.find({ _id: { $in: booking.questions } }).select('-correctAnswer -__v');
 
-    // Ensure they return in the same order as stored in the booking
-    const questionsInOrder = booking.questions.map(id => questions.find(q => q._id.toString() === id.toString()));
+    // Ensure they return in the same order as stored in the booking, and drop stale/missing references.
+    const questionMap = new Map(questions.map((q) => [q._id.toString(), q]));
+    const questionsInOrder = booking.questions
+      .map((id) => questionMap.get(id.toString()))
+      .filter(Boolean);
+
+    if (!questionsInOrder.length) {
+      return res.status(400).json({
+        success: false,
+        message: 'No valid questions found for this test. Please contact admin and regenerate questions.',
+      });
+    }
+
+    // If some question IDs are stale, persist only valid IDs to prevent blank test rendering.
+    if (questionsInOrder.length !== booking.questions.length) {
+      booking.questions = questionsInOrder.map((q) => q._id);
+    }
 
     // Mark booking as started
     booking.testStarted = true;
@@ -122,8 +136,15 @@ const submitTest = async (req, res) => {
     const questions = await Question.find({ _id: { $in: booking.questions } });
     if (!questions.length) return res.status(400).json({ success: false, message: 'Assigned questions not found' });
 
-    // Maintain the order from the booking
-    const questionsInOrder = booking.questions.map(id => questions.find(q => q._id.toString() === id.toString()));
+    // Maintain the order from the booking and remove stale question references.
+    const questionMap = new Map(questions.map((q) => [q._id.toString(), q]));
+    const questionsInOrder = booking.questions
+      .map((id) => questionMap.get(id.toString()))
+      .filter(Boolean);
+
+    if (!questionsInOrder.length) {
+      return res.status(400).json({ success: false, message: 'No valid questions available for submission' });
+    }
 
     let score = 0;
     let maxScore = 0;

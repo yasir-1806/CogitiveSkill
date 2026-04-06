@@ -83,7 +83,12 @@ export default function TestInterface() {
   const handleStart = async () => {
     try {
       const res = await api.post('/tests/start', { bookingId: booking._id });
-      setQuestions(res.data.questions);
+      const fetchedQuestions = Array.isArray(res.data.questions) ? res.data.questions.filter(Boolean) : [];
+      if (!fetchedQuestions.length) {
+        setError('No questions are available for this test yet. Please contact admin.');
+        return;
+      }
+      setQuestions(fetchedQuestions);
       // Use the server limit as the "ground truth" but allow current timeLeft to stay if it's already lower
       // (meaning they spent time on the prep screen)
       const serverLimit = res.data.timeLimit;
