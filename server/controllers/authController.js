@@ -8,12 +8,13 @@ const generateToken = (id) => jwt.sign({ id }, process.env.JWT_SECRET, { expires
 const register = async (req, res) => {
   try {
     const { name, email, password, role } = req.body;
-    if (!name || !email || !password) return res.status(400).json({ success: false, message: 'All fields required' });
+    const normalizedEmail = email?.toString().trim().toLowerCase();
+    if (!name || !normalizedEmail || !password) return res.status(400).json({ success: false, message: 'All fields required' });
 
-    const existing = await User.findOne({ email });
+    const existing = await User.findOne({ email: normalizedEmail });
     if (existing) return res.status(400).json({ success: false, message: 'Email already registered' });
 
-    const user = await User.create({ name, email, password, role: role === 'admin' ? 'admin' : 'student' });
+    const user = await User.create({ name, email: normalizedEmail, password, role: role === 'admin' ? 'admin' : 'student' });
 
     // Initialize leaderboard entry for student
     if (user.role === 'student') {
@@ -34,10 +35,19 @@ const register = async (req, res) => {
 const login = async (req, res) => {
   try {
     const { email, password } = req.body;
-    if (!email || !password) return res.status(400).json({ success: false, message: 'Email and password required' });
+    const normalizedEmail = email?.toString().trim().toLowerCase();
+    if (!normalizedEmail || !password) return res.status(400).json({ success: false, message: 'Email and password required' });
 
-    const user = await User.findOne({ email });
-    if (!user || !(await user.matchPassword(password))) {
+    const user = await User.findOne({ email: normalizedEmail });
+    if (!user) {
+      return res.status(401).json({ success: false, message: 'Invalid credentials' });
+    }
+
+    if (!user.password) {
+      return res.status(401).json({ success: false, message: 'Use Google sign-in for this account' });
+    }
+
+    if (!(await user.matchPassword(password))) {
       return res.status(401).json({ success: false, message: 'Invalid credentials' });
     }
 
@@ -108,3 +118,4 @@ const googleLogin = async (req, res) => {
 };
 
 module.exports = { register, login, getProfile, googleLogin };
+
