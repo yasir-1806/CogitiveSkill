@@ -46,6 +46,9 @@ export default function ManageQuestions() {
         context: aiConfig.context
       });
       setAiQuestions(res.data.data);
+      if (res.data.isMock) {
+        alert(`AI returned partial/low-quality output. ${res.data.count} question(s) were prepared, with fallback questions added where needed.`);
+      }
       setAiModalOpen(true);
     } catch (e) {
       alert(e.response?.data?.message || 'AI Generation failed');

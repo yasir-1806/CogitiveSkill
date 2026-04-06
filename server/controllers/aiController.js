@@ -7,6 +7,41 @@ const TestResult = require("../models/TestResult");
 // Initialize Gemini AI
 const genAI = new GoogleGenerativeAI(process.env.GEMINI_API_KEY || "");
 
+const MODEL_NAME = process.env.GEMINI_MODEL || "gemini-1.5-flash";
+const MAX_ATTEMPTS = 3;
+
+const extractJsonArray = (text) => {
+  if (!text) return [];
+  const cleaned = text.replace(/```json/gi, "").replace(/```/g, "").trim();
+  const match = cleaned.match(/\[[\s\S]*\]/);
+  if (!match) return [];
+  return JSON.parse(match[0]);
+};
+
+const normalizeQuestion = (q, optionsCount) => {
+  if (!q || typeof q !== "object") return null;
+  const questionText = (q.questionText || "").toString().trim();
+  const optionsRaw = Array.isArray(q.options) ? q.options : [];
+  const options = optionsRaw.map((opt) => (opt ?? "").toString().trim());
+  const correctAnswer = Number(q.correctAnswer);
+  const explanation = (q.explanation || "").toString().trim();
+  const points = Number(q.points) > 0 ? Number(q.points) : 10;
+
+  if (!questionText || questionText.length < 12) return null;
+  if (options.length !== optionsCount) return null;
+  if (options.some((opt) => !opt || opt.length < 1)) return null;
+  if (new Set(options.map((opt) => opt.toLowerCase())).size !== optionsCount) return null;
+  if (!Number.isInteger(correctAnswer) || correctAnswer < 0 || correctAnswer >= optionsCount) return null;
+
+  return {
+    questionText,
+    options,
+    correctAnswer,
+    explanation,
+    points,
+  };
+};
+
 /**
  * @desc    Generate questions using AI
  * @route   POST /api/ai/generate-questions
@@ -37,35 +72,33 @@ exports.generateQuestions = async (req, res) => {
     const existingQuestions = await Question.find({ topicId, levelId, isActive: true }).select('questionText');
     const existingTexts = existingQuestions.map(q => q.questionText || "");
 
-    const MODEL_NAME = process.env.GEMINI_MODEL || "gemini-1.5-flash";
-
     const contextInstruction = context.trim() 
       ? `\n      SPECIFIC USER INSTRUCTIONS:\n      ${context}\n      Please follow these instructions closely while generating the questions.` 
       : "";
 
-    const prompt = `
+    const buildPrompt = (requiredCount, avoidQuestionTexts = []) => `
       You are an expert cognitive skill assessment creator.
-      Task: Generate ${safeCount} unique, high-quality multiple-choice questions for a professional assessment.
+      Task: Generate ${requiredCount} unique, high-quality multiple-choice questions for a professional assessment.
       Topic: "${topic.topicName}"
       Difficulty: ${level.difficulty} (${level.title || "Standard"})
-      
+
       INSTRUCTIONS FOR QUALITY AND STYLE:
       1. Each question must have exactly ${safeOptionsCount} options.
       2. Options must be logical, distinct, and plausible. Avoid overlapping or ambiguous choices.
       3. Questions must be challenging but fair for the "${level.difficulty}" level.
       4. Ensure mathematical, technical, and grammatical accuracy.
-      5. CRITICAL: If the user context below mentions a source like "IndiaBIX", "GMAT", "CAT", etc., you MUST strictly follow the style, formatting, and difficulty patterns commonly found on those platforms for the given topic.${contextInstruction}
-      6. Ensure each question is fundamentally different from others in this set.
-      
+      5. Do not repeat any question from this avoid list:
+         ${avoidQuestionTexts.length ? avoidQuestionTexts.map((q, i) => `${i + 1}. ${q}`).join("\n         ") : "None"}
+      6. Keep questions practical and test-like, not generic theory-only statements.${contextInstruction}
+
       RESPONSE FORMAT:
-      Return ONLY a valid JSON array. No explanations, no markdown formatting (like \`\`\`json), just the raw JSON.
-      JSON Format:
+      Return ONLY a valid JSON array. No markdown or extra text.
       [
         {
-          "questionText": "Clear and concise question text",
+          "questionText": "Clear question text",
           "options": ["Option A", "Option B", "Option C", "Option D"],
           "correctAnswer": 0,
-          "explanation": "Brief, clear explanation of the correct answer and the logic behind it",
+          "explanation": "Brief explanation",
           "points": 10
         }
       ]
@@ -99,7 +132,7 @@ exports.generateQuestions = async (req, res) => {
       });
     };
 
-    let questionsData;
+    let questionsData = [];
     const hasValidKey = process.env.GEMINI_API_KEY && process.env.GEMINI_API_KEY !== "your_gemini_api_key_here";
 
     let isMock = !hasValidKey;
@@ -109,22 +142,25 @@ exports.generateQuestions = async (req, res) => {
       questionsData = generateMockQuestions(topic.topicName, safeCount, safeOptionsCount, level.difficulty);
     } else {
       try {
-        console.log(`Generating ${safeCount} AI questions for ${topic.topicName} using ${MODEL_NAME}`);
         const model = genAI.getGenerativeModel({ model: MODEL_NAME });
-        const result = await model.generateContent(prompt);
-        const response = await result.response;
-        let text = response.text();
-        
-        // Robust JSON extraction
-        const jsonMatch = text.match(/\[[\s\S]*\]/);
-        if (!jsonMatch) {
-          console.warn("AI returned malformed text, attempting to clean.");
-          text = text.replace(/```json/g, "").replace(/```/g, "").trim();
-          const retryMatch = text.match(/\[[\s\S]*\]/);
-          if (!retryMatch) throw new Error("AI did not return a valid JSON array");
-          questionsData = JSON.parse(retryMatch[0]);
-        } else {
-          questionsData = JSON.parse(jsonMatch[0]);
+        const avoid = [...existingTexts];
+
+        for (let attempt = 1; attempt <= MAX_ATTEMPTS && questionsData.length < safeCount; attempt += 1) {
+          const remaining = safeCount - questionsData.length;
+          const prompt = buildPrompt(remaining, avoid);
+          console.log(`AI generation attempt ${attempt}/${MAX_ATTEMPTS}: requesting ${remaining} question(s) using ${MODEL_NAME}`);
+          const result = await model.generateContent(prompt);
+          const response = await result.response;
+          const batch = extractJsonArray(response.text());
+          if (!Array.isArray(batch)) continue;
+
+          for (const item of batch) {
+            const normalized = normalizeQuestion(item, safeOptionsCount);
+            if (!normalized) continue;
+            questionsData.push(normalized);
+            avoid.push(normalized.questionText);
+            if (questionsData.length >= safeCount) break;
+          }
         }
       } catch (aiError) {
         console.error("AI generation failed. Falling back to mock data. Error:", aiError.message);
@@ -137,14 +173,11 @@ exports.generateQuestions = async (req, res) => {
     const existingTextsSet = new Set(existingTexts.filter(t => t).map(t => t.toLowerCase().trim()));
     const seenInResponse = new Set();
     
-    const finalQuestions = Array.isArray(questionsData) ? questionsData.filter(q => {
-      if (!q || typeof q !== 'object') return false;
-      if (!q.questionText || !q.options || !Array.isArray(q.options) || q.options.length !== safeOptionsCount) {
-        console.warn("Skipping malformed question object:", q);
-        return false;
-      }
-      
-      const normalizedText = q.questionText.toString().toLowerCase().trim();
+    const finalQuestions = Array.isArray(questionsData) ? questionsData
+    .map((q) => normalizeQuestion(q, safeOptionsCount))
+    .filter(Boolean)
+    .filter((q) => {
+      const normalizedText = q.questionText.toLowerCase().trim();
       if (existingTextsSet.has(normalizedText) || seenInResponse.has(normalizedText)) {
         console.log(`Skipping duplicate question: ${q.questionText}`);
         return false;
@@ -152,25 +185,13 @@ exports.generateQuestions = async (req, res) => {
       
       seenInResponse.add(normalizedText);
       return true;
-    }).map((q) => {
-      const normalizedOptions = q.options.map((opt) => (opt ?? '').toString().trim());
-      const parsedAnswer = Number(q.correctAnswer);
-      const safeAnswer = Number.isInteger(parsedAnswer) && parsedAnswer >= 0 && parsedAnswer < safeOptionsCount ? parsedAnswer : 0;
-      const safePoints = Number(q.points) > 0 ? Number(q.points) : 10;
-
-      return {
-        questionText: q.questionText.toString().trim(),
-        options: normalizedOptions,
-        correctAnswer: safeAnswer,
-        explanation: (q.explanation || '').toString().trim(),
-        points: safePoints,
-      };
     }) : [];
 
     // Safety fallback: if all questions were filtered out, use at least one mock
-    if (finalQuestions.length === 0 && safeCount > 0) {
-      console.warn("All generated questions were filtered out as duplicates. Providing one mock question.");
-      finalQuestions.push(...generateMockQuestions(topic.topicName, 1, safeOptionsCount, level.difficulty));
+    if (finalQuestions.length < safeCount) {
+      const missing = safeCount - finalQuestions.length;
+      console.warn(`Generated ${finalQuestions.length}/${safeCount}. Filling ${missing} question(s) with fallback.`);
+      finalQuestions.push(...generateMockQuestions(topic.topicName, missing, safeOptionsCount, level.difficulty));
       isMock = true;
     }
 
