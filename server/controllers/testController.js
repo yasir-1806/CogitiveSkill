@@ -5,6 +5,24 @@ const Leaderboard = require('../models/Leaderboard');
 const Booking = require('../models/Booking');
 const Level = require('../models/Level');
 
+const APP_TIMEZONE = process.env.APP_TIMEZONE || 'Asia/Kolkata';
+const getNowParts = () => {
+  const now = new Date();
+  const date = new Intl.DateTimeFormat('en-CA', {
+    timeZone: APP_TIMEZONE,
+    year: 'numeric',
+    month: '2-digit',
+    day: '2-digit',
+  }).format(now);
+  const time = new Intl.DateTimeFormat('en-GB', {
+    timeZone: APP_TIMEZONE,
+    hour: '2-digit',
+    minute: '2-digit',
+    hour12: false,
+  }).format(now);
+  return { now, todayStr: date, currentTime: time };
+};
+
 // POST /api/tests/start
 const startTest = async (req, res) => {
   try {
@@ -19,8 +37,7 @@ const startTest = async (req, res) => {
       return res.status(400).json({ success: false, message: 'This test session has already been completed.' });
     }
 
-    const now = new Date();
-    const todayStr = now.toLocaleDateString('en-CA'); // YYYY-MM-DD in local time
+    const { now, todayStr, currentTime } = getNowParts();
     const slot = booking.slotId;
 
     // Require admin attendance verification
@@ -34,7 +51,6 @@ const startTest = async (req, res) => {
     }
 
     // Ensure session is active
-    const currentTime = now.toTimeString().slice(0, 5);
     if (slot && currentTime > slot.endTime) {
       return res.status(400).json({ success: false, message: 'This session has already ended.' });
     }

@@ -4,6 +4,24 @@ const Level = require('../models/Level');
 const Progress = require('../models/Progress');
 const Topic = require('../models/Topic');
 
+const APP_TIMEZONE = process.env.APP_TIMEZONE || 'Asia/Kolkata';
+const getNowParts = () => {
+  const now = new Date();
+  const date = new Intl.DateTimeFormat('en-CA', {
+    timeZone: APP_TIMEZONE,
+    year: 'numeric',
+    month: '2-digit',
+    day: '2-digit',
+  }).format(now);
+  const time = new Intl.DateTimeFormat('en-GB', {
+    timeZone: APP_TIMEZONE,
+    hour: '2-digit',
+    minute: '2-digit',
+    hour12: false,
+  }).format(now);
+  return { now, todayStr: date, currentTime: time };
+};
+
 // POST /api/bookings
 const bookSlot = async (req, res) => {
   try {
@@ -58,9 +76,7 @@ const getMyBookings = async (req, res) => {
       .populate('levelId', 'levelNumber difficulty title passingScore')
       .sort({ createdAt: -1 });
 
-    const now = new Date();
-    const todayStr = now.toISOString().split('T')[0];
-    const currentTime = now.toTimeString().slice(0, 5);
+    const { todayStr, currentTime } = getNowParts();
 
     // Filter out missed tests: past date or past time today, and still 'confirmed'
     const filteredBookings = bookings.filter(b => {
@@ -91,9 +107,7 @@ const getMyBookings = async (req, res) => {
 // GET /api/bookings/active
 const getActiveBooking = async (req, res) => {
   try {
-    const now = new Date();
-    const todayStr = now.toLocaleDateString('en-CA'); // YYYY-MM-DD in local time
-    const currentTime = now.toTimeString().slice(0, 5);
+    const { now, todayStr, currentTime } = getNowParts();
 
     console.log(`Checking active bookings for user ${req.user._id}. Today: ${todayStr}, Time: ${currentTime}`);
 
