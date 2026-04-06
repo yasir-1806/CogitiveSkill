@@ -16,7 +16,13 @@ export default function Login() {
   const navigate = useNavigate();
 
   const handleGoogleSuccess = async (response) => {
-    setLoading(true); setError('');
+    if (!response?.credential) {
+      setError('Google did not return a credential. Please try again.');
+      return;
+    }
+
+    setLoading(true);
+    setError('');
     try {
       const res = await api.post('/auth/google', { credential: response.credential });
       login(res.data.token, res.data.user);
@@ -120,7 +126,7 @@ export default function Login() {
           <div className="google-login-wrap mx-auto">
             <GoogleLogin
               onSuccess={handleGoogleSuccess}
-              onError={() => setError('Google Authentication Failed')}
+              onError={() => setError('Google authentication popup failed. Check authorized origins and try again.')}
               theme={isLight ? "outline" : "outline"}
               shape="pill"
               text="signin_with"

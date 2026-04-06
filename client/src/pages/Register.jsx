@@ -16,7 +16,13 @@ export default function Register() {
   const navigate = useNavigate();
 
   const handleGoogleSuccess = async (response) => {
-    setLoading(true); setError('');
+    if (!response?.credential) {
+      setError('Google did not return a credential. Please try again.');
+      return;
+    }
+
+    setLoading(true);
+    setError('');
     try {
       const res = await api.post('/auth/google', { credential: response.credential });
       login(res.data.token, res.data.user);
@@ -70,11 +76,11 @@ export default function Register() {
           <div className="w-full max-w-sm">
             <GoogleLogin 
               onSuccess={handleGoogleSuccess} 
-              onError={() => setError('Google Authentication Failed')}
+              onError={() => setError('Google authentication popup failed. Check authorized origins and try again.')}
               theme={isLight ? "outline" : "filled_black"}
               shape="pill"
               text="signup_with"
-              width="100%"
+              width="380"
             />
           </div>
         </div>
