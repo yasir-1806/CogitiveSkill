@@ -303,10 +303,88 @@ const generateGrammarFallback = (topicName, difficulty, count) => {
   return out.map((q) => normalizeQuestion(q, 4)).filter(Boolean);
 };
 
+const generateGeneralFallback = (topicName, difficulty, count) => {
+  const samples = [
+    {
+      questionText: `Which statement best describes the core purpose of ${topicName}?`,
+      options: [
+        `To improve the main ${topicName.toLowerCase()} skills through practice and strategy.`,
+        `To memorize random details without context.`,
+        `To focus only on speed while ignoring accuracy.`,
+        `To avoid using any structured approach or method.`,
+      ],
+      correctAnswer: 0,
+      explanation: `The core purpose of ${topicName} is to build strong skills with practice and meaningful strategies.`,
+      points: 10,
+    },
+    {
+      questionText: `Which technique is most useful when developing ${topicName} skills?`,
+      options: [
+        `Regular practice with structured review and examples.`,
+        `Relying on random guessing without planning.`,
+        `Avoiding repetition and practicing only once.`,
+        `Using unrelated exercises that do not target ${topicName}.`,
+      ],
+      correctAnswer: 0,
+      explanation: `Effective ${topicName.toLowerCase()} development uses structured review and practice-based examples.`,
+      points: 10,
+    },
+    {
+      questionText: `What is an example of a strong ${topicName.toLowerCase()} strategy?`,
+      options: [
+        `Breaking the skill into smaller parts and practicing each one.`,
+        `Doing only one long pass through the material without review.`,
+        `Trying to remember everything without any system.`,
+        `Ignoring feedback and repeating the same mistakes.`,
+      ],
+      correctAnswer: 0,
+      explanation: `A good strategy is to break ${topicName.toLowerCase()} into smaller, manageable parts and practice them deliberately.`,
+      points: 10,
+    },
+    {
+      questionText: `Why is feedback important when learning ${topicName}?`,
+      options: [
+        `It helps identify mistakes and improve performance quickly.`,
+        `It makes the process slower and less efficient.`,
+        `It is only useful for advanced learners, not beginners.`,
+        `It encourages memorization without understanding.`,
+      ],
+      correctAnswer: 0,
+      explanation: `Feedback helps learners correct errors and improve their ${topicName.toLowerCase()} skills faster.`,
+      points: 10,
+    },
+    {
+      questionText: `Which habit would most likely improve ${topicName.toLowerCase()} over time?`,
+      options: [
+        `Consistent practice with focused review and reflection.`,
+        `Avoiding practice until the very last minute.`,
+        `Studying multiple unrelated topics simultaneously.`,
+        `Repeating the same task without evaluating results.`,
+      ],
+      correctAnswer: 0,
+      explanation: `Consistent practice with review and reflection is the best way to build strong ${topicName.toLowerCase()} habits.`,
+      points: 10,
+    },
+  ];
+
+  const out = [];
+  for (let i = 0; i < count; i += 1) {
+    const base = samples[i % samples.length];
+    out.push({
+      ...base,
+      questionText: `${base.questionText} (${topicName} - ${difficulty} set ${Math.floor(i / samples.length) + 1})`,
+    });
+  }
+
+  return uniqueByKey(out, (q) => toKey(q.questionText)).slice(0, count);
+};
+
 const generateCommandAwareFallback = (topicName, difficulty, count, commandKeywords = [], profile = { mode: "general" }) => {
   const base = profile.mode === "grammar"
     ? generateGrammarFallback(topicName, difficulty, count * 3)
-    : generateAptitudeFallback(topicName, difficulty, count * 3);
+    : profile.mode === "quant"
+    ? generateAptitudeFallback(topicName, difficulty, count * 3)
+    : generateGeneralFallback(topicName, difficulty, count * 3);
   if (!commandKeywords.length) return base.slice(0, count);
 
   const enriched = base.map((q, i) => {
@@ -464,11 +542,12 @@ exports.generateQuestions = async (req, res) => {
     let questionsData = [];
     const strictCommandMode = Boolean(context && context.trim());
     const hasValidKey = process.env.GEMINI_API_KEY && process.env.GEMINI_API_KEY !== "your_gemini_api_key_here";
-
+    let fallbackReason = null;
     let isMock = !hasValidKey;
 
     if (!hasValidKey) {
-      console.log("No valid API key found. Using fallback data.");
+      fallbackReason = "No valid Gemini API key configured. Using fallback data.";
+      console.log(fallbackReason);
       questionsData = generateCommandAwareFallback(
         topic.topicName,
         level.difficulty,
@@ -489,7 +568,7 @@ exports.generateQuestions = async (req, res) => {
 
         for (let attempt = 1; attempt <= MAX_ATTEMPTS && questionsData.length < safeCount; attempt += 1) {
           const remaining = safeCount - questionsData.length;
-          const requestCount = Math.min(remaining * 4, 40);
+          const requestCount = Math.min(Math.max(remaining * 2, 1), 10);
           const prompt = buildPrompt(requestCount, avoid.slice(-100));
           console.log(`AI generation attempt ${attempt}/${MAX_ATTEMPTS}: requesting ${requestCount} candidate(s) using ${MODEL_NAME}`);
           const result = await model.generateContent(prompt);
@@ -550,6 +629,7 @@ exports.generateQuestions = async (req, res) => {
           }
         }
       } catch (aiError) {
+        fallbackReason = aiError.message;
         console.error("AI generation failed. Falling back to mock data. Error:", aiError.message);
         questionsData = generateCommandAwareFallback(
           topic.topicName,
@@ -625,7 +705,8 @@ exports.generateQuestions = async (req, res) => {
       success: true,
       count: questionsToSave.length,
       data: questionsToSave,
-      isMock // Helpful for frontend to know
+      isMock,
+      fallbackReason,
     });
 
   } catch (error) {

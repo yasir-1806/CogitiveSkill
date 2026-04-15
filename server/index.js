@@ -6,9 +6,6 @@ const morgan = require('morgan');
 const rateLimit = require('express-rate-limit');
 const connectDB = require('./config/db');
 
-// Connect to MongoDB
-connectDB();
-
 const app = express();
 
 // Security middleware
@@ -71,5 +68,21 @@ app.use((err, req, res, next) => {
   res.status(err.status || 500).json({ success: false, message: err.message || 'Internal server error' });
 });
 
-const PORT = process.env.PORT || 5000;
-app.listen(PORT, () => console.log(`🚀 Server running on port ${PORT}`));
+// Connect to MongoDB
+const startServer = async () => {
+  try {
+    console.log('⏳ Starting server initialization...');
+    await connectDB();
+    
+    const PORT = process.env.PORT || 5001;
+    app.listen(PORT, () => {
+      console.log(`🚀 Server running on port ${PORT}`);
+      console.log('✅ Server is ready to handle requests');
+    });
+  } catch (err) {
+    console.error('💥 Critical failure during server startup:', err.message);
+    process.exit(1);
+  }
+};
+
+startServer();
