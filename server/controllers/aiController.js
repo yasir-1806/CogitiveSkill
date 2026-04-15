@@ -33,16 +33,33 @@ const extractJsonArray = (text) => {
   const cleaned = text.replace(/```json/gi, "").replace(/```/g, "").trim();
   const match = cleaned.match(/\[[\s\S]*\]/);
   if (!match) return [];
-  return JSON.parse(match[0]);
+  try {
+    return JSON.parse(match[0]);
+  } catch (err) {
+    console.warn('Failed to parse JSON array from AI output:', err.message);
+    return [];
+  }
 };
 
 const extractFirstJson = (text) => {
   if (!text) return null;
   const cleaned = text.replace(/```json/gi, "").replace(/```/g, "").trim();
   const objectMatch = cleaned.match(/\{[\s\S]*\}/);
-  if (objectMatch) return JSON.parse(objectMatch[0]);
+  if (objectMatch) {
+    try {
+      return JSON.parse(objectMatch[0]);
+    } catch (err) {
+      console.warn('Failed to parse JSON object from AI output:', err.message);
+    }
+  }
   const arrayMatch = cleaned.match(/\[[\s\S]*\]/);
-  if (arrayMatch) return JSON.parse(arrayMatch[0]);
+  if (arrayMatch) {
+    try {
+      return JSON.parse(arrayMatch[0]);
+    } catch (err) {
+      console.warn('Failed to parse JSON array from AI output:', err.message);
+    }
+  }
   return null;
 };
 
@@ -383,7 +400,7 @@ exports.generateQuestions = async (req, res) => {
     const existingTexts = existingQuestions.map(q => q.questionText || "");
 
     const contextInstruction = context.trim() 
-      ? `\n      SPECIFIC USER INSTRUCTIONS:\n      ${context}\n      Please follow these instructions closely while generating the questions.` 
+      ? `\n      USER PROMPT / COMMANDS:\n      ${context}\n      Please follow these instructions closely while generating the questions.` 
       : "";
 
     const isIndiaBixRequested = /india\s*bix/i.test(context || "");
@@ -571,7 +588,7 @@ exports.generateQuestions = async (req, res) => {
       return true;
     }) : [];
 
-    if (finalQuestions.length < safeCount && !(strictCommandMode && hasValidKey)) {
+    if (finalQuestions.length < safeCount) {
       const missing = safeCount - finalQuestions.length;
       console.warn(`Generated ${finalQuestions.length}/${safeCount}. Filling ${missing} with structured fallback.`);
       const fallback = generateCommandAwareFallback(
