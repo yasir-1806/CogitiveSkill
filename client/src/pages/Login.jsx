@@ -48,8 +48,6 @@ export default function Login() {
     }
   };
 
-  const isLight = document.documentElement.classList.contains('light') || document.body.classList.contains('light');
-
   return (
     <div className="min-h-screen flex items-center justify-center px-4 hero-bg">
       <div className="glow-orb w-72 h-72 top-1/4 left-1/4 opacity-10 fixed" style={{ background: 'var(--accent-primary)' }} />
@@ -123,16 +121,15 @@ export default function Login() {
             </div>
           </div>
 
-          <div className="google-login-wrap mx-auto">
+          <div className="google-login-wrap mx-auto flex justify-center">
             <GoogleLogin
               onSuccess={handleGoogleSuccess}
               onError={() => setError('Google authentication popup failed. Check authorized origins and try again.')}
-              theme={isLight ? "outline" : "outline"}
-              shape="pill"
+              type="standard"
+              theme="outline"
+              size="large"
               text="signin_with"
-              size="medium"
-              logo_alignment="left"
-              width="240"
+              locale="en"
             />
           </div>
         </div>

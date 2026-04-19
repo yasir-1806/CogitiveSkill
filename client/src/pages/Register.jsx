@@ -73,16 +73,15 @@ export default function Register() {
         )}
 
         <div className="mb-6 flex justify-center w-full">
-          <div className="w-full max-w-sm">
-            <GoogleLogin 
-              onSuccess={handleGoogleSuccess} 
-              onError={() => setError('Google authentication popup failed. Check authorized origins and try again.')}
-              theme={isLight ? "outline" : "filled_black"}
-              shape="pill"
-              text="signup_with"
-              width="380"
-            />
-          </div>
+          <GoogleLogin 
+            onSuccess={handleGoogleSuccess} 
+            onError={() => setError('Google authentication popup failed. Check authorized origins and try again.')}
+            type="standard"
+            theme="outline"
+            size="large"
+            text="signup_with"
+            locale="en"
+          />
         </div>
 
         <div className="relative mb-6">

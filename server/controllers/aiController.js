@@ -1,13 +1,22 @@
-const { GoogleGenerativeAI } = require("@google/generative-ai");
+const OpenAI = require("openai");
 const Question = require("../models/Question");
 const Topic = require("../models/Topic");
 const Level = require("../models/Level");
 const TestResult = require("../models/TestResult");
 
-// Initialize Gemini AI
-const genAI = new GoogleGenerativeAI(process.env.GEMINI_API_KEY || "");
+// Initialize OpenAI (lazy initialization for missing API key)
+let openai = null;
 
-const MODEL_NAME = process.env.GEMINI_MODEL || "gemini-flash-latest";
+const getOpenAI = () => {
+  if (!openai && process.env.OPENAI_API_KEY?.trim()) {
+    openai = new OpenAI({
+      apiKey: process.env.OPENAI_API_KEY,
+    });
+  }
+  return openai;
+};
+
+const MODEL_NAME = process.env.OPENAI_MODEL || "gpt-4-turbo";
 const MAX_ATTEMPTS = 10;
 const STOPWORDS = new Set([
   "the", "and", "for", "with", "from", "that", "this", "these", "those",
@@ -507,46 +516,50 @@ exports.generateQuestions = async (req, res) => {
       : "";
 
     const buildPrompt = (requiredCount, avoidQuestionTexts = []) => `
-      You are an expert cognitive skill assessment creator.
-      Task: Generate ${requiredCount} unique, high-quality multiple-choice questions for a professional assessment.
-      Topic: "${topic.topicName}"
-      Difficulty: ${level.difficulty} (${level.title || "Standard"})
+You are an expert MCQ (multiple choice question) creator for cognitive skill assessments.
 
-      INSTRUCTIONS FOR QUALITY AND STYLE:
-      1. Each question must have exactly ${safeOptionsCount} options.
-      2. Options must be logical, distinct, and plausible. Avoid overlapping or ambiguous choices.
-      3. Questions must be challenging but fair for the "${level.difficulty}" level.
-      4. Ensure mathematical, technical, and grammatical accuracy.
-      5. Do not repeat any question from this avoid list:
-         ${avoidQuestionTexts.length ? avoidQuestionTexts.map((q, i) => `${i + 1}. ${q}`).join("\n         ") : "None"}
-      6. USER COMMANDS ARE MANDATORY. If a command conflicts with your default style, follow the user command.
-      7. Keep questions practical and test-like, not generic theory-only statements.${contextInstruction}
-      7. Never output identical options in a question. Avoid "All of the above" and "None of the above".
-      8. Do not repeat the same option set across different questions.
-      ${modeInstruction}
-      ${sourceStyleInstruction}
+TASK: Generate ${requiredCount} unique, high-quality multiple-choice questions.
 
-      RESPONSE FORMAT:
-      Return ONLY a valid JSON array. No markdown or extra text.
-      [
-        {
-          "questionText": "Clear question text",
-          "options": ["Option A", "Option B", "Option C", "Option D"],
-          "correctAnswer": 0,
-          "explanation": "Brief explanation",
-          "points": 10
-        }
-      ]
-    `;
+CONTEXT:
+- Topic: "${topic.topicName}"
+- Difficulty: ${level.difficulty}
+- Level Title: ${level.title || "Standard"}
+${context.trim() ? `- User Commands: ${context}` : ""}
+
+REQUIREMENTS:
+1. Each question MUST have exactly 4 options
+2. Options must be distinct, logical, and plausible
+3. Questions must be appropriate for "${level.difficulty}" difficulty level
+4. All questions must be unique (do not repeat)
+5. Ensure grammatical and factual accuracy
+6. Questions must be practical and test-like
+7. Never use "All of the above" or "None of the above"
+8. Avoid repeating the same option patterns across questions
+
+AVOID these existing questions:
+${avoidQuestionTexts.length > 0 ? avoidQuestionTexts.slice(0, 10).map((q, i) => `${i + 1}. ${q}`).join("\n") : "None"}
+
+RESPONSE FORMAT:
+Return ONLY a valid JSON array with NO additional text or markdown.
+Example format:
+[
+  {
+    "questionText": "What is the capital of France?",
+    "options": ["London", "Berlin", "Paris", "Madrid"],
+    "correctAnswer": 2,
+    "explanation": "Paris is the capital city of France.",
+    "points": 10
+  }
+]
+`;
 
     let questionsData = [];
-    const strictCommandMode = Boolean(context && context.trim());
-    const hasValidKey = process.env.GEMINI_API_KEY && process.env.GEMINI_API_KEY !== "your_gemini_api_key_here";
+    const hasValidKey = process.env.OPENAI_API_KEY && process.env.OPENAI_API_KEY.trim();
     let fallbackReason = null;
     let isMock = !hasValidKey;
 
     if (!hasValidKey) {
-      fallbackReason = "No valid Gemini API key configured. Using fallback data.";
+      fallbackReason = "No valid OpenAI API key configured. Using fallback data.";
       console.log(fallbackReason);
       questionsData = generateCommandAwareFallback(
         topic.topicName,
@@ -557,80 +570,52 @@ exports.generateQuestions = async (req, res) => {
       );
     } else {
       try {
-        const model = genAI.getGenerativeModel({
-          model: MODEL_NAME,
-          generationConfig: {
-            temperature: 1,
-            topP: 0.95,
-          },
-        });
         const avoid = [...existingTexts];
 
         for (let attempt = 1; attempt <= MAX_ATTEMPTS && questionsData.length < safeCount; attempt += 1) {
           const remaining = safeCount - questionsData.length;
           const requestCount = Math.min(Math.max(remaining * 2, 1), 10);
-          const prompt = buildPrompt(requestCount, avoid.slice(-100));
-          console.log(`AI generation attempt ${attempt}/${MAX_ATTEMPTS}: requesting ${requestCount} candidate(s) using ${MODEL_NAME}`);
-          const result = await model.generateContent(prompt);
-          const response = await result.response;
-          const batch = extractJsonArray(response.text());
-          if (!Array.isArray(batch)) continue;
+          const prompt = buildPrompt(requestCount, avoid.slice(-50));
+          console.log(`AI generation attempt ${attempt}/${MAX_ATTEMPTS}: requesting ${requestCount} question(s) using ${MODEL_NAME}`);
+          const message = await getOpenAI().chat.completions.create({
+            model: MODEL_NAME,
+            messages: [{
+              role: "user",
+              content: prompt
+            }],
+            temperature: 0.7,
+            max_tokens: 2000,
+          });
+          const responseText = message.choices[0]?.message?.content || "";
+          const batch = extractJsonArray(responseText);
+          if (!Array.isArray(batch) || batch.length === 0) continue;
 
           const normalizedBatch = batch
             .map((item) => normalizeQuestion(item, safeOptionsCount))
             .filter(Boolean);
 
-          const acceptedIndexes = await getCompliantIndexes(
-            model,
-            normalizedBatch,
-            topic.topicName,
-            level.difficulty,
-            context
-          );
-          const acceptedSet = new Set(acceptedIndexes);
-
-          normalizedBatch.forEach((q, idx) => {
-            if (!acceptedSet.has(idx)) return;
+          normalizedBatch.forEach((q) => {
+            if (questionsData.length >= safeCount) return;
             if (!isQuestionCompliantWithCommands(q, commandKeywords, commandProfile)) return;
             questionsData.push(q);
             avoid.push(q.questionText);
           });
         }
 
-        // Extra strict top-up pass when user provided explicit commands.
-        if (strictCommandMode && questionsData.length < safeCount) {
-          for (let attempt = 1; attempt <= 4 && questionsData.length < safeCount; attempt += 1) {
-            const remaining = safeCount - questionsData.length;
-            const strictPrompt = `
-              Generate EXACTLY ${remaining} questions.
-              Follow user commands strictly: ${context}
-              Topic: ${topic.topicName}
-              Difficulty: ${level.difficulty}
-              Do not generate any question outside the command scope.
-              Avoid these existing questions:
-              ${existingTexts.slice(-60).join("\n")}
-
-              Return only JSON array with fields:
-              questionText, options(4), correctAnswer(0-3), explanation, points.
-            `;
-            const result = await model.generateContent(strictPrompt);
-            const response = await result.response;
-            const batch = extractJsonArray(response.text());
-            if (!Array.isArray(batch)) continue;
-
-            batch
-              .map((item) => normalizeQuestion(item, safeOptionsCount))
-              .filter(Boolean)
-              .forEach((q) => {
-                if (questionsData.length >= safeCount) return;
-                if (!isQuestionCompliantWithCommands(q, commandKeywords, commandProfile)) return;
-                questionsData.push(q);
-              });
-          }
+        if (questionsData.length === 0) {
+          console.warn("AI did not generate valid questions. Using fallback.");
+          questionsData = generateCommandAwareFallback(
+            topic.topicName,
+            level.difficulty,
+            safeCount,
+            commandKeywords,
+            commandProfile
+          );
+          isMock = true;
         }
       } catch (aiError) {
-        fallbackReason = aiError.message;
-        console.error("AI generation failed. Falling back to mock data. Error:", aiError.message);
+        fallbackReason = `OpenAI API Error: ${aiError.message}`;
+        console.error("AI generation failed:", aiError.message);
         questionsData = generateCommandAwareFallback(
           topic.topicName,
           level.difficulty,
@@ -736,34 +721,51 @@ exports.getPerformanceInsights = async (req, res) => {
       return res.status(404).json({ message: "Test result not found" });
     }
 
-    const model = genAI.getGenerativeModel({ model: "gemini-flash-latest" });
-
-    const prompt = `
-      Analyze the following cognitive test result for a student named ${result.userId.name}.
-      Topic: ${result.topicId.topicName}
-      Score: ${result.score}%
-      Total Questions: ${result.totalQuestions}
-      Correct Answers: ${result.correctAnswers}
-      
-      Provide a short, encouraging, and actionable "AI Coach" feedback (2-3 sentences).
-      Focus on their strengths if they scored well, or specific areas for improvement if they scored lower.
-      Do not use markdown formatting, just plain text.
-    `;
-
     let insight;
-    if (!process.env.GEMINI_API_KEY || process.env.GEMINI_API_KEY === "your_gemini_api_key_here") {
-      // Mock Insight
-      if (result.score >= 80) {
+
+    if (!process.env.OPENAI_API_KEY || !process.env.OPENAI_API_KEY.trim()) {
+      // Fallback insight
+      if (result.percentage >= 80) {
         insight = `Excellent work, ${result.userId.name}! Your ${result.topicId.topicName} skills are top-notch. Keep pushing yourself with higher levels of difficulty.`;
-      } else if (result.score >= 50) {
-        insight = `Good effort, ${result.userId.name}. You have a solid foundation in ${result.topicId.topicName}, but focusing on accuracy under time pressure could really boost your scores.`;
+      } else if (result.percentage >= 50) {
+        insight = `Good effort, ${result.userId.name}. You have a solid foundation in ${result.topicId.topicName}, but focusing on accuracy could help boost your scores.`;
       } else {
-        insight = `Don't be discouraged, ${result.userId.name}. ${result.topicId.topicName} can be challenging. We recommend reviewing the basic patterns and trying a lower difficulty level first.`;
+        insight = `Keep practicing, ${result.userId.name}. With more effort on ${result.topicId.topicName}, you'll improve significantly.`;
       }
     } else {
-      const aiResult = await model.generateContent(prompt);
-      const aiResponse = await aiResult.response;
-      insight = aiResponse.text();
+      try {
+        const message = await getOpenAI().chat.completions.create({
+          model: MODEL_NAME,
+          messages: [
+            {
+              role: "system",
+              content: "You are an AI coach providing encouraging and actionable feedback to students. Be supportive and specific. Keep response to 2-3 sentences."
+            },
+            {
+              role: "user",
+              content: `A student named ${result.userId.name} just completed a test on ${result.topicId.topicName}.
+Score: ${result.percentage}%
+Correct Answers: ${result.correctAnswers}/${result.totalQuestions}
+
+Provide brief, encouraging, and actionable feedback. Focus on strengths if they did well, or specific improvement areas if they struggled.`
+            }
+          ],
+          temperature: 0.7,
+          max_tokens: 200,
+        });
+
+        insight = message.choices[0]?.message?.content?.trim() || "Great effort on the test!";
+      } catch (error) {
+        console.error("OpenAI API Error:", error.message);
+        // Fallback if API fails
+        if (result.percentage >= 80) {
+          insight = `Excellent work, ${result.userId.name}! Your ${result.topicId.topicName} skills are top-notch. Keep pushing yourself with higher levels of difficulty.`;
+        } else if (result.percentage >= 50) {
+          insight = `Good effort, ${result.userId.name}. You have a solid foundation in ${result.topicId.topicName}, but focusing on accuracy could help boost your scores.`;
+        } else {
+          insight = `Keep practicing, ${result.userId.name}. With more effort on ${result.topicId.topicName}, you'll improve significantly.`;
+        }
+      }
     }
 
     res.status(200).json({
