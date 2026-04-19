@@ -515,51 +515,72 @@ exports.generateQuestions = async (req, res) => {
       `
       : "";
 
-    const buildPrompt = (requiredCount, avoidQuestionTexts = []) => `
-You are an expert MCQ (multiple choice question) creator for cognitive skill assessments.
+    const buildPrompt = (requiredCount, avoidQuestionTexts = []) => ({
+      systemPrompt: `You are an expert MCQ question creator for cognitive skill assessments. Your role is to generate high-quality, unique multiple choice questions that strictly follow user specifications and context requirements. CRITICAL: You MUST follow all user commands and constraints exactly.`,
+      userPrompt: `GENERATE EXACTLY ${requiredCount} UNIQUE MCQ QUESTIONS
 
-TASK: Generate ${requiredCount} unique, high-quality multiple-choice questions.
+TOPIC: "${topic.topicName}"
+DIFFICULTY: ${level.difficulty}
+${context.trim() ? `\nUSER COMMANDS/REQUIREMENTS:\n${context}\n⚠️ STRICTLY FOLLOW THE ABOVE COMMANDS - These override default behavior.` : ""}
 
-CONTEXT:
-- Topic: "${topic.topicName}"
-- Difficulty: ${level.difficulty}
-- Level Title: ${level.title || "Standard"}
-${context.trim() ? `- User Commands: ${context}` : ""}
-
-REQUIREMENTS:
+MANDATORY REQUIREMENTS:
 1. Each question MUST have exactly 4 options
-2. Options must be distinct, logical, and plausible
-3. Questions must be appropriate for "${level.difficulty}" difficulty level
-4. All questions must be unique (do not repeat)
-5. Ensure grammatical and factual accuracy
-6. Questions must be practical and test-like
-7. Never use "All of the above" or "None of the above"
-8. Avoid repeating the same option patterns across questions
+2. All options must be grammatically correct and plausible
+3. Question difficulty must match: ${level.difficulty}
+4. DO NOT repeat ANY of these existing questions:
+${avoidQuestionTexts.length > 0 ? avoidQuestionTexts.slice(0, 15).map((q, i) => `   ${i + 1}. "${q}"`).join("\n") : "   (none)"}
 
-AVOID these existing questions:
-${avoidQuestionTexts.length > 0 ? avoidQuestionTexts.slice(0, 10).map((q, i) => `${i + 1}. ${q}`).join("\n") : "None"}
+FORMAT REQUIREMENTS:
+- Return ONLY valid JSON array
+- NO markdown code blocks
+- NO explanatory text before/after JSON
+- Each question must have: questionText, options (array of 4), correctAnswer (0-3), explanation, points (10)
 
-RESPONSE FORMAT:
-Return ONLY a valid JSON array with NO additional text or markdown.
-Example format:
+QUALITY REQUIREMENTS:
+- Make questions practical and exam-like
+- Ensure options are clearly distinct
+- Never use "All of the above" or "None of the above"
+- All questions must be original and contextual
+
+START JSON ARRAY:`,
+    });
+
+    const buildPromptMessages = (requiredCount, avoidQuestionTexts = []) => {
+      const { systemPrompt, userPrompt } = buildPrompt(requiredCount, avoidQuestionTexts);
+      return [
+        {
+          role: "system",
+          content: systemPrompt
+        },
+        {
+          role: "user",
+          content: userPrompt + `
 [
   {
-    "questionText": "What is the capital of France?",
-    "options": ["London", "Berlin", "Paris", "Madrid"],
-    "correctAnswer": 2,
-    "explanation": "Paris is the capital city of France.",
+    "questionText": "Example question here?",
+    "options": ["Option 1", "Option 2", "Option 3", "Option 4"],
+    "correctAnswer": 0,
+    "explanation": "Brief explanation",
     "points": 10
   }
-]
-`;
+]`
+        }
+      ];
+    };
 
     let questionsData = [];
-    const hasValidKey = process.env.OPENAI_API_KEY && process.env.OPENAI_API_KEY.trim();
+    const apiKey = process.env.OPENAI_API_KEY?.trim();
+    const isPlaceholder = !apiKey || apiKey.includes('YOUR_OPENAI') || apiKey === 'sk-' || apiKey.length < 20;
+    const hasValidKey = !!apiKey && !isPlaceholder;
     let fallbackReason = null;
     let isMock = !hasValidKey;
 
     if (!hasValidKey) {
-      fallbackReason = "No valid OpenAI API key configured. Using fallback data.";
+      if (isPlaceholder) {
+        fallbackReason = "⚠️  OPENAI_API_KEY is not configured (placeholder detected). Using fallback mock data. Run 'node test-openai.js' for setup help.";
+      } else {
+        fallbackReason = "⚠️  No valid OpenAI API key. Using fallback mock data.";
+      }
       console.log(fallbackReason);
       questionsData = generateCommandAwareFallback(
         topic.topicName,
@@ -575,16 +596,13 @@ Example format:
         for (let attempt = 1; attempt <= MAX_ATTEMPTS && questionsData.length < safeCount; attempt += 1) {
           const remaining = safeCount - questionsData.length;
           const requestCount = Math.min(Math.max(remaining * 2, 1), 10);
-          const prompt = buildPrompt(requestCount, avoid.slice(-50));
+          const messages = buildPromptMessages(requestCount, avoid.slice(-50));
           console.log(`AI generation attempt ${attempt}/${MAX_ATTEMPTS}: requesting ${requestCount} question(s) using ${MODEL_NAME}`);
           const message = await getOpenAI().chat.completions.create({
             model: MODEL_NAME,
-            messages: [{
-              role: "user",
-              content: prompt
-            }],
+            messages: messages,
             temperature: 0.7,
-            max_tokens: 2000,
+            max_tokens: 3000,
           });
           const responseText = message.choices[0]?.message?.content || "";
           const batch = extractJsonArray(responseText);
@@ -723,7 +741,11 @@ exports.getPerformanceInsights = async (req, res) => {
 
     let insight;
 
-    if (!process.env.OPENAI_API_KEY || !process.env.OPENAI_API_KEY.trim()) {
+    const apiKey = process.env.OPENAI_API_KEY?.trim();
+    const isPlaceholder = !apiKey || apiKey.includes('YOUR_OPENAI') || apiKey === 'sk-' || apiKey.length < 20;
+    const hasValidKey = !!apiKey && !isPlaceholder;
+
+    if (!hasValidKey) {
       // Fallback insight
       if (result.percentage >= 80) {
         insight = `Excellent work, ${result.userId.name}! Your ${result.topicId.topicName} skills are top-notch. Keep pushing yourself with higher levels of difficulty.`;
@@ -739,19 +761,21 @@ exports.getPerformanceInsights = async (req, res) => {
           messages: [
             {
               role: "system",
-              content: "You are an AI coach providing encouraging and actionable feedback to students. Be supportive and specific. Keep response to 2-3 sentences."
+              content: "You are an encouraging AI mentor providing personalized feedback to students on test results. Your feedback should be motivating, specific, and actionable. Always acknowledge their effort, highlight strengths, and suggest concrete next steps for improvement. Keep your response to 2-3 sentences maximum."
             },
             {
               role: "user",
-              content: `A student named ${result.userId.name} just completed a test on ${result.topicId.topicName}.
+              content: `Analyze test results and provide feedback:
+Student: ${result.userId.name}
+Topic: ${result.topicId.topicName}
 Score: ${result.percentage}%
-Correct Answers: ${result.correctAnswers}/${result.totalQuestions}
+Correct: ${result.correctAnswers}/${result.totalQuestions}
 
-Provide brief, encouraging, and actionable feedback. Focus on strengths if they did well, or specific improvement areas if they struggled.`
+Provide brief, personalized feedback that is encouraging if they scored well (80%+), constructive if moderate (50-79%), or supportive if they struggled (<50%).`
             }
           ],
-          temperature: 0.7,
-          max_tokens: 200,
+          temperature: 0.8,
+          max_tokens: 250,
         });
 
         insight = message.choices[0]?.message?.content?.trim() || "Great effort on the test!";
