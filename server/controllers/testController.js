@@ -75,7 +75,13 @@ const startTest = async (req, res) => {
 
       // Shuffle and pick the required number of questions from the Level model
       const targetCount = booking.levelId.totalQuestions || 10;
-      const shuffled = allQuestions.sort(() => 0.5 - Math.random());
+      
+      // Fisher-Yates shuffle algorithm
+      const shuffled = [...allQuestions];
+      for (let i = shuffled.length - 1; i > 0; i--) {
+        const j = Math.floor(Math.random() * (i + 1));
+        [shuffled[i], shuffled[j]] = [shuffled[j], shuffled[i]];
+      }
       const selected = shuffled.slice(0, targetCount);
       
       // Ensure we store unique IDs (though Question.find with _id selection should already be unique)
@@ -203,8 +209,16 @@ const submitTest = async (req, res) => {
 
       // Use level number for attempt tracking (better for frontend lookup)
       const levelNumStr = String(level.levelNumber);
-      const currentAttempts = progress.attemptsPerLevel.get(levelNumStr) || 0;
-      progress.attemptsPerLevel.set(levelNumStr, currentAttempts + 1);
+      let currentAttempts = 0;
+      
+      // Handle both Mongoose Map and plain object access
+      if (progress.attemptsPerLevel.get) {
+        currentAttempts = progress.attemptsPerLevel.get(levelNumStr) || 0;
+        progress.attemptsPerLevel.set(levelNumStr, currentAttempts + 1);
+      } else {
+        currentAttempts = progress.attemptsPerLevel[levelNumStr] || 0;
+        progress.attemptsPerLevel[levelNumStr] = currentAttempts + 1;
+      }
       progress.totalAttempts += 1;
 
       // Always update best score if current percentage is higher
