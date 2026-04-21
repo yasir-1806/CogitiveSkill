@@ -1,7 +1,7 @@
 import { useEffect, useState, useRef } from 'react';
 import { useLocation, useNavigate, useSearchParams } from 'react-router-dom';
 import { motion, AnimatePresence } from 'framer-motion';
-import { Clock, ChevronLeft, ChevronRight, AlertTriangle, Send, PlayCircle, Target } from 'lucide-react';
+import { Clock, ChevronLeft, ChevronRight, AlertTriangle, Send, PlayCircle, Target, CheckCircle } from 'lucide-react';
 import api from '../../services/api';
 
 export default function TestInterface() {
@@ -237,16 +237,35 @@ export default function TestInterface() {
            </p>
         </div>
         
-        <motion.button 
-          whileHover={{ scale: 1.05, shadow: '0 0 20px rgba(168,85,247,0.4)' }} 
-          whileTap={{ scale: 0.95 }}
-          onClick={handleStart} 
-          className="btn-primary text-lg px-10 py-4 w-full flex items-center justify-center gap-3 relative overflow-hidden group"
-        >
-          <div className="absolute inset-0 bg-white/10 translate-x-[-100%] group-hover:translate-x-[100%] transition-transform duration-700 skew-x-12" />
-          <PlayCircle size={22} />
-          Start Assessment
-        </motion.button>
+        {!booking?.isPresent ? (
+          <div className="flex flex-col items-center gap-4">
+            <motion.div initial={{ opacity: 0, y: 10 }} animate={{ opacity: 1, y: 0 }} 
+              className="w-full p-4 rounded-xl text-sm font-bold flex flex-col items-center gap-3" 
+              style={{ background: 'rgba(245,158,11,0.15)', color: '#f59e0b', border: '1px solid rgba(245,158,11,0.3)' }}>
+              <AlertTriangle size={20} /> 
+              <div>
+                <p>Attendance Not Yet Verified</p>
+                <p className="text-xs font-normal mt-2 opacity-90">Please wait for the admin to verify your attendance. Once verified, the Start Test button will appear.</p>
+              </div>
+            </motion.div>
+            <div className="w-full py-4 px-10 rounded-2xl text-lg font-bold flex items-center justify-center gap-3 text-white opacity-50 cursor-not-allowed"
+              style={{ background: 'linear-gradient(135deg, var(--accent-primary), #a855f7)', boxShadow: '0 4px 15px rgba(168,85,247,0.1)' }}>
+              <PlayCircle size={22} />
+              Waiting for Attendance...
+            </div>
+          </div>
+        ) : (
+          <motion.button 
+            whileHover={{ scale: 1.05, shadow: '0 0 20px rgba(168,85,247,0.4)' }} 
+            whileTap={{ scale: 0.95 }}
+            onClick={handleStart} 
+            className="btn-primary text-lg px-10 py-4 w-full flex items-center justify-center gap-3 relative overflow-hidden group"
+          >
+            <div className="absolute inset-0 bg-white/10 translate-x-[-100%] group-hover:translate-x-[100%] transition-transform duration-700 skew-x-12" />
+            <PlayCircle size={22} />
+            Start Assessment
+          </motion.button>
+        )}
       </motion.div>
     </div>
   );

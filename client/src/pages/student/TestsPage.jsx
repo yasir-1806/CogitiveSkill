@@ -60,9 +60,23 @@ export default function TestsPage() {
         const isEnded = currentTime > slot.endTime;
         const isStarted = currentTime >= slot.startTime;
         
-        // Show test link anytime on the correct date if slot is not ended
-        // We prioritize time-based access as per user request
-        if (isStarted && !isEnded) {
+        // If attendance not verified, show waiting message
+        if (!booking.isPresent && isStarted && !isEnded) {
+          return (
+            <div className="flex flex-col gap-2 mt-2">
+              <div className="w-full flex justify-center items-center gap-2 py-2 rounded-lg text-sm font-bold"
+                style={{ background: 'rgba(245,158,11,0.15)', color: '#f59e0b', border: '1px solid rgba(245,158,11,0.3)' }}>
+                <AlertTriangle size={16} /> Attendance Not Verified
+              </div>
+              <p className="text-[10px] text-center" style={{ color: 'var(--accent-amber)' }}>
+                Waiting for admin to verify your attendance. Check back soon.
+              </p>
+            </div>
+          );
+        }
+        
+        // Show test link only if attendance is verified and time is in slot
+        if (isStarted && !isEnded && booking.isPresent) {
           return (
             <div className="flex flex-col gap-2 mt-2">
               <Link
@@ -72,11 +86,6 @@ export default function TestsPage() {
               >
                 <PlayCircle size={18} /> Enter Test Now
               </Link>
-              {!booking.isPresent && (
-                <p className="text-[10px] text-center" style={{ color: 'var(--accent-amber)' }}>
-                  Attendance not verified yet. You can open the page, but test starts only after verification.
-                </p>
-              )}
             </div>
           );
         } else if (!isStarted) {
