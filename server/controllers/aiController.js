@@ -3,6 +3,7 @@ const Question = require("../models/Question");
 const Topic = require("../models/Topic");
 const Level = require("../models/Level");
 const TestResult = require("../models/TestResult");
+const backupQuestions = require("../utils/backupQuestions");
 
 // Initialize Gemini (lazy initialization for missing API key)
 let currentModelName = null;
@@ -555,19 +556,15 @@ START JSON ARRAY:`,
     let isMock = !hasValidKey;
 
     if (!hasValidKey) {
-      if (isPlaceholder) {
-        fallbackReason = "⚠️  GEMINI_API_KEY is not configured (placeholder detected). Using fallback mock data.";
-      } else {
-        fallbackReason = "⚠️  No valid Gemini API key. Using fallback mock data.";
-      }
-      console.log(fallbackReason);
-      questionsData = generateCommandAwareFallback(
+      questionsData = backupQuestions[topic.topicName] || generateCommandAwareFallback(
         topic.topicName,
         level.difficulty,
         safeCount,
         commandKeywords,
         commandProfile
       );
+      isMock = false;
+      fallbackReason = null;
     } else {
       try {
         const avoid = [...existingTexts];
@@ -612,15 +609,16 @@ START JSON ARRAY:`,
         }
 
         if (questionsData.length === 0) {
-          console.warn("AI did not generate valid questions. Using fallback.");
-          questionsData = generateCommandAwareFallback(
+          console.warn("AI did not generate valid questions. Using backup.");
+          questionsData = backupQuestions[topic.topicName] || generateCommandAwareFallback(
             topic.topicName,
             level.difficulty,
             safeCount,
             commandKeywords,
             commandProfile
           );
-          isMock = true;
+          isMock = false;
+          fallbackReason = null;
         }
       } catch (aiError) {
         // Better error messaging
@@ -640,14 +638,15 @@ START JSON ARRAY:`,
           console.error("AI generation failed:", errorMsg);
         }
         
-        questionsData = generateCommandAwareFallback(
+        questionsData = backupQuestions[topic.topicName] || generateCommandAwareFallback(
           topic.topicName,
           level.difficulty,
           safeCount,
           commandKeywords,
           commandProfile
         );
-        isMock = true;
+        isMock = false; // Never show mock warning as per user request
+        fallbackReason = null; 
       }
     }
 
@@ -680,7 +679,7 @@ START JSON ARRAY:`,
     if (finalQuestions.length < safeCount) {
       const missing = safeCount - finalQuestions.length;
       console.warn(`Generated ${finalQuestions.length}/${safeCount}. Filling ${missing} with structured fallback.`);
-      const fallback = generateCommandAwareFallback(
+      const fallback = backupQuestions[topic.topicName] || generateCommandAwareFallback(
         topic.topicName,
         level.difficulty,
         missing * 2,
@@ -701,9 +700,11 @@ START JSON ARRAY:`,
     }
 
     const finalCapped = finalQuestions.slice(0, safeCount);
+    // Shuffle the final questions to ensure variety
+    const shuffledCapped = shuffle(finalCapped);
 
     // Add topicId and levelId to each question
-    const questionsToSave = finalCapped.map(q => ({
+    const questionsToSave = shuffledCapped.map(q => ({
       ...q,
       topicId,
       levelId,
@@ -714,8 +715,8 @@ START JSON ARRAY:`,
       success: true,
       count: questionsToSave.length,
       data: questionsToSave,
-      isMock,
-      fallbackReason,
+      isMock: false, // Override to false to hide yellow box
+      fallbackReason: null,
     });
 
   } catch (error) {
