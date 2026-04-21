@@ -54,7 +54,7 @@ app.use('/api/slots', require('./routes/slots'));
 app.use('/api/bookings', require('./routes/bookings'));
 app.use('/api/tests', require('./routes/tests'));
 app.use('/api/admin', require('./routes/admin'));
-app.use('/api/ai', require('./routes/aiRoutes'));
+app.use('/api/ai', require('./routes/ai'));
 
 // Health check
 app.get('/api/health', (req, res) => res.json({ status: 'ok', timestamp: new Date() }));

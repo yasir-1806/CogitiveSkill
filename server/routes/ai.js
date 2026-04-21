@@ -13,4 +13,7 @@ router.post('/generate-questions', adminOnly, aiController.generateQuestions);
 // Any authenticated user: Get insights for their own results
 router.post('/performance-insights', aiController.getPerformanceInsights);
 
+// Diagnostic test route (Public)
+router.get('/test', (req, res) => res.json({ success: true, message: 'AI routes are working correctly' }));
+
 module.exports = router;
