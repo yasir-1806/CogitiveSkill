@@ -8,27 +8,32 @@ const getSlots = async (req, res) => {
     
     let slots = await Slot.find(query).sort('date startTime').populate('bookedStudents', 'name email');
 
-    // If user is a student, enforce rolling visibility rules
-    if (req.user && req.user.role === 'student') {
-      const now = new Date();
-      const todayStr = now.toLocaleDateString('en-CA'); 
-      const currentTime = now.toTimeString().slice(0, 5); // "HH:MM"
-      
-      const tomorrow = new Date(now);
-      tomorrow.setDate(now.getDate() + 1);
-      const tomorrowStr = tomorrow.toLocaleDateString('en-CA');
-      
-      const isAfter8PM = currentTime >= "20:00";
-      const isBefore7PM = currentTime < "19:00";
+    const now = new Date();
+    const todayStr = now.toLocaleDateString('en-CA'); 
+    const currentTime = now.toTimeString().slice(0, 5); // "HH:MM"
 
-      slots = slots.filter(slot => {
+    // Filter slots based on role and time
+    slots = slots.filter(slot => {
+      // Rule for both students and admins: Hide today's slots if they have already ended
+      if (slot.date === todayStr && slot.endTime <= currentTime) {
+        return false;
+      }
+
+      // Additional strict rolling visibility rules for students
+      if (req.user && req.user.role === 'student') {
+        const tomorrow = new Date(now);
+        tomorrow.setDate(now.getDate() + 1);
+        const tomorrowStr = tomorrow.toLocaleDateString('en-CA');
+        
+        const isAfter8PM = currentTime >= "20:00";
+        const isBefore7PM = currentTime < "19:00";
+
         // 1. Hide if full
         if (slot.bookedStudents.length >= slot.maxStudents) return false;
 
-        // Today's Slots: Visible only before 7:00 PM and before slot end time
+        // Today's Slots: Visible only before 7:00 PM
         if (slot.date === todayStr) {
           if (!isBefore7PM) return false;
-          if (slot.endTime <= currentTime) return false;
           return true;
         }
         
@@ -39,8 +44,11 @@ const getSlots = async (req, res) => {
 
         // Hide all other dates (past or beyond tomorrow)
         return false;
-      });
-    }
+      }
+
+      // Admins see all other active slots (future dates and future times today)
+      return true;
+    });
 
     res.json({ success: true, slots });
   } catch (err) {
