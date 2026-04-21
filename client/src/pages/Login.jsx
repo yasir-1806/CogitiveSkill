@@ -17,18 +17,22 @@ export default function Login() {
 
   const handleGoogleSuccess = async (response) => {
     if (!response?.credential) {
-      setError('Google did not return a credential. Please try again.');
+      console.error('❌ Google credential missing:', response);
+      setError('Google did not return a credential. Check browser console for details.');
       return;
     }
 
     setLoading(true);
     setError('');
     try {
+      console.log('🔄 Sending Google credential to server...');
       const res = await api.post('/auth/google', { credential: response.credential });
+      console.log('✅ Google login successful');
       login(res.data.token, res.data.user);
       navigate(res.data.user.role === 'admin' ? '/admin' : '/dashboard');
     } catch (err) {
-      setError(err.response?.data?.message || 'Google login failed');
+      console.error('❌ Google login error:', err?.response?.data || err?.message);
+      setError(err.response?.data?.message || 'Google login failed. Check console for details.');
     } finally {
       setLoading(false);
     }
