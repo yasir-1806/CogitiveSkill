@@ -1,20 +1,21 @@
-const OpenAI = require("openai");
+const { GoogleGenerativeAI } = require("@google/generative-ai");
 const Question = require("../models/Question");
 const Topic = require("../models/Topic");
 const Level = require("../models/Level");
 const TestResult = require("../models/TestResult");
 
-// Initialize OpenAI (lazy initialization for missing API key)
-let openai = null;
+// Initialize Gemini (lazy initialization for missing API key)
+let geminiModel = null;
 
-const getOpenAI = () => {
-  if (!openai && process.env.OPENAI_API_KEY?.trim()) {
-    openai = new OpenAI({ apiKey: process.env.OPENAI_API_KEY });
+const getGemini = () => {
+  if (!geminiModel && process.env.GEMINI_API_KEY?.trim()) {
+    const genAI = new GoogleGenerativeAI(process.env.GEMINI_API_KEY);
+    geminiModel = genAI.getGenerativeModel({ model: process.env.GEMINI_MODEL });
   }
-  return openai;
+  return geminiModel;
 };
 
-const MODEL_NAME = process.env.OPENAI_MODEL || "gpt-3.5-turbo";
+const MODEL_NAME = process.env.GEMINI_MODEL || "gemini-1.5-flash";
 const MAX_ATTEMPTS = 10;
 const STOPWORDS = new Set([
   "the", "and", "for", "with", "from", "that", "this", "these", "those",
@@ -436,15 +437,10 @@ const getCompliantIndexes = async (questions, topicName, difficulty, context) =>
     - No extra text.`;
 
   try {
-    const openaiInstance = getOpenAI();
-    const message = await openaiInstance.chat.completions.create({
-      model: MODEL_NAME,
-      messages: [{ role: "user", content: checkerPrompt }],
-      temperature: 0,
-      max_tokens: 200,
-    });
+    const model = getGemini();
+    const result = await model.generateContent(checkerPrompt);
+    const responseText = result.response.text();
     
-    const responseText = message.choices[0]?.message?.content || "";
     const parsed = extractFirstJson(responseText);
     if (Array.isArray(parsed)) {
       return parsed.filter((x) => Number.isInteger(x) && x >= 0 && x < questions.length);
@@ -519,7 +515,7 @@ exports.generateQuestions = async (req, res) => {
       : "";
 
     const buildPrompt = (requiredCount, avoidQuestionTexts = []) => ({
-      systemPrompt: `You are an expert MCQ question creator for cognitive skill assessments. Your role is to generate high-quality, unique multiple choice questions that strictly follow user specifications and context requirements. CRITICAL: You MUST follow all user commands and constraints exactly.`,
+      systemPrompt: `You are an expert MCQ question creator. YOUR TOP PRIORITY is to strictly follow all user commands and specifications provided in the prompt. If a user asks for a specific topic, style, or constraint, you MUST adhere to it exactly. Your output must be high-quality, unique, and strictly formatted as JSON.`,
       userPrompt: `GENERATE EXACTLY ${requiredCount} UNIQUE MCQ QUESTIONS
 
 TOPIC: "${topic.topicName}"
@@ -549,17 +545,17 @@ START JSON ARRAY:`,
     });
 
     let questionsData = [];
-    const apiKey = process.env.OPENAI_API_KEY?.trim();
-    const isPlaceholder = !apiKey || apiKey.includes('YOUR_OPENAI') || apiKey.length < 20;
+    const apiKey = process.env.GEMINI_API_KEY?.trim();
+    const isPlaceholder = !apiKey || apiKey.includes('YOUR_GEMINI') || apiKey.length < 20;
     const hasValidKey = !!apiKey && !isPlaceholder;
     let fallbackReason = null;
     let isMock = !hasValidKey;
 
     if (!hasValidKey) {
       if (isPlaceholder) {
-        fallbackReason = "⚠️  OPENAI_API_KEY is not configured (placeholder detected). Using fallback mock data.";
+        fallbackReason = "⚠️  GEMINI_API_KEY is not configured (placeholder detected). Using fallback mock data.";
       } else {
-        fallbackReason = "⚠️  No valid OpenAI API key. Using fallback mock data.";
+        fallbackReason = "⚠️  No valid Gemini API key. Using fallback mock data.";
       }
       console.log(fallbackReason);
       questionsData = generateCommandAwareFallback(
@@ -580,18 +576,10 @@ START JSON ARRAY:`,
           console.log(`AI generation attempt ${attempt}/${MAX_ATTEMPTS}: requesting ${requestCount} question(s) using ${MODEL_NAME}`);
           
           try {
-            const openaiInstance = getOpenAI();
-            const message = await openaiInstance.chat.completions.create({
-              model: MODEL_NAME,
-              messages: [
-                { role: "system", content: systemPrompt },
-                { role: "user", content: userPrompt }
-              ],
-              temperature: 0.7,
-              max_tokens: 2000,
-            });
+            const model = getGemini();
+            const result = await model.generateContent(userPrompt);
+            const responseText = result.response.text();
             
-            const responseText = message.choices[0]?.message?.content || "";
             const batch = extractJsonArray(responseText);
             if (!Array.isArray(batch) || batch.length === 0) continue;
 
@@ -628,16 +616,16 @@ START JSON ARRAY:`,
         let errorMsg = aiError.message || 'Unknown error';
         
         if (errorMsg.includes('quota') || errorMsg.includes('429')) {
-          fallbackReason = `⚠️ OpenAI Quota Exceeded: Check your API quota and billing.`;
-          console.error("OpenAI Quota Error - Using fallback");
+          fallbackReason = `⚠️ Gemini Quota Exceeded: Check your API quota and billing.`;
+          console.error("Gemini Quota Error - Using fallback");
         } else if (errorMsg.includes('API key') || errorMsg.includes('invalid') || errorMsg.includes('authentication')) {
-          fallbackReason = `❌ OpenAI Authentication Failed: Invalid API key. Check your OPENAI_API_KEY.`;
-          console.error("OpenAI Auth Error - Using fallback");
-        } else if (errorMsg.includes('model')) {
-          fallbackReason = `❌ OpenAI Model Error: Model not available. Check OPENAI_MODEL setting.`;
-          console.error("OpenAI Model Error - Using fallback");
+          fallbackReason = `❌ Gemini Authentication Failed: Invalid API key. Check your GEMINI_API_KEY.`;
+          console.error("Gemini Auth Error - Using fallback");
+        } else if (errorMsg.includes('model') || errorMsg.includes('404') || errorMsg.includes('not found')) {
+          fallbackReason = `❌ Gemini Model Error: Model not found or not available. Check GEMINI_MODEL setting.`;
+          console.error("Gemini Model Error - Using fallback");
         } else {
-          fallbackReason = `OpenAI API Error: ${errorMsg}`;
+          fallbackReason = `Gemini API Error: ${errorMsg}`;
           console.error("AI generation failed:", errorMsg);
         }
         
@@ -748,8 +736,8 @@ exports.getPerformanceInsights = async (req, res) => {
 
     let insight;
 
-    const apiKey = process.env.OPENAI_API_KEY?.trim();
-    const isPlaceholder = !apiKey || apiKey.includes('YOUR_OPENAI') || apiKey.length < 20;
+    const apiKey = process.env.GEMINI_API_KEY?.trim();
+    const isPlaceholder = !apiKey || apiKey.includes('YOUR_GEMINI') || apiKey.length < 20;
     const hasValidKey = !!apiKey && !isPlaceholder;
 
     if (!hasValidKey) {
@@ -777,17 +765,11 @@ Provide EXACTLY 2-3 sentences of brief, personalized feedback that is:
 
 Be specific and actionable. End with ONE concrete next step.`;
         
-        const openaiInstance = getOpenAI();
-        const message = await openaiInstance.chat.completions.create({
-          model: MODEL_NAME,
-          messages: [{ role: "user", content: prompt }],
-          temperature: 0.7,
-          max_tokens: 150,
-        });
-        
-        insight = message.choices[0]?.message?.content?.trim() || "";
+        const model = getGemini();
+        const result_insight = await model.generateContent(prompt);
+        insight = result_insight.response.text().trim();
       } catch (error) {
-        console.error("OpenAI API Error:", error.message);
+        console.error("Gemini API Error:", error.message);
         // Fallback if API fails
         if (result.percentage >= 80) {
           insight = `Excellent work, ${result.userId.name}! Your ${result.topicId.topicName} skills are top-notch. Keep pushing yourself with higher levels of difficulty.`;
