@@ -5,12 +5,15 @@ const Level = require("../models/Level");
 const TestResult = require("../models/TestResult");
 
 // Initialize Gemini (lazy initialization for missing API key)
-let geminiModel = null;
+let currentModelName = null;
 
-const getGemini = () => {
-  if (!geminiModel && process.env.GEMINI_API_KEY?.trim()) {
-    const genAI = new GoogleGenerativeAI(process.env.GEMINI_API_KEY);
-    geminiModel = genAI.getGenerativeModel({ model: process.env.GEMINI_MODEL });
+const getGemini = (modelName = process.env.GEMINI_MODEL || "gemini-flash-latest") => {
+  if (!geminiModel || currentModelName !== modelName) {
+    if (process.env.GEMINI_API_KEY?.trim()) {
+      const genAI = new GoogleGenerativeAI(process.env.GEMINI_API_KEY);
+      geminiModel = genAI.getGenerativeModel({ model: modelName });
+      currentModelName = modelName;
+    }
   }
   return geminiModel;
 };
@@ -578,9 +581,9 @@ START JSON ARRAY:`,
           try {
             const model = getGemini();
             const result = await model.generateContent(userPrompt);
-            const responseText = result.response.text();
+            const response = await result.response;
             
-            const batch = extractJsonArray(responseText);
+            const batch = extractJsonArray(response.text());
             if (!Array.isArray(batch) || batch.length === 0) continue;
 
             const normalizedBatch = batch
@@ -595,6 +598,14 @@ START JSON ARRAY:`,
             });
           } catch (attemptError) {
             console.warn(`Attempt ${attempt} failed:`, attemptError.message);
+            
+            // Auto-fix for model 404 errors: immediately try the working alias
+            if ((attemptError.message.includes('404') || attemptError.message.includes('not found')) && process.env.GEMINI_MODEL !== 'gemini-flash-latest') {
+              console.log("Switching to fallback alias: gemini-flash-latest");
+              process.env.GEMINI_MODEL = 'gemini-flash-latest';
+              continue; 
+            }
+
             if (attempt < MAX_ATTEMPTS) continue;
             throw attemptError;
           }
