@@ -9,8 +9,23 @@ export default function ManageStudents() {
   const [filtered, setFiltered] = useState([]);
   const [search, setSearch] = useState('');
   const [loading, setLoading] = useState(true);
+  const [error, setError] = useState('');
 
-  const fetchStudents = () => api.get('/admin/students').then(r => { setStudents(r.data.students); setFiltered(r.data.students); }).catch(console.error).finally(() => setLoading(false));
+  const fetchStudents = () => {
+    api.get('/admin/students')
+      .then(r => {
+        setStudents(r.data.students || []);
+        setFiltered(r.data.students || []);
+        setError('');
+      })
+      .catch(err => {
+        console.error('Error fetching students:', err);
+        setError(err?.response?.data?.message || 'Failed to load students');
+        setStudents([]);
+        setFiltered([]);
+      })
+      .finally(() => setLoading(false));
+  };
   useEffect(() => { fetchStudents(); }, []);
 
   useEffect(() => {
@@ -40,6 +55,17 @@ export default function ManageStudents() {
       </div>
 
       <div className="stat-card overflow-hidden">
+        {error && (
+          <div className="mb-4 p-4 rounded-lg text-sm" style={{ background: 'rgba(244,63,94,0.1)', color: '#f43f5e', border: '1px solid rgba(244,63,94,0.2)' }}>
+            <div className="flex items-center justify-between">
+              <span>❌ {error}</span>
+              <button onClick={fetchStudents} className="px-3 py-1 rounded text-xs font-medium"
+                style={{ background: 'rgba(244,63,94,0.2)', color: '#f43f5e' }}>
+                Retry
+              </button>
+            </div>
+          </div>
+        )}
         <div className="overflow-x-auto">
           <table className="w-full">
             <thead>
@@ -88,8 +114,8 @@ export default function ManageStudents() {
                   </td>
                 </motion.tr>
               ))}
-              {filtered.length === 0 && (
-                <tr><td colSpan={5} className="px-4 py-12 text-center" style={{ color: 'var(--text-secondary)' }}>No students found</td></tr>
+              {filtered.length === 0 && !error && (
+                <tr><td colSpan={6} className="px-4 py-12 text-center" style={{ color: 'var(--text-secondary)' }}>No students found</td></tr>
               )}
             </tbody>
           </table>
