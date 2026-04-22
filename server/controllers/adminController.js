@@ -8,7 +8,7 @@ const Progress = require('../models/Progress');
 // GET /api/admin/students
 const getAllStudents = async (req, res) => {
   try {
-    const students = await User.find({ role: 'student' })
+    const students = await User.find({ role: 'student', isActive: true })
       .select('-password')
       .populate('registeredTopics', 'topicName icon')
       .sort({ createdAt: -1 });

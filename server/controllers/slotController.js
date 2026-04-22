@@ -9,8 +9,11 @@ const getSlots = async (req, res) => {
     let slots = await Slot.find(query).sort('date startTime').populate('bookedStudents', 'name email');
 
     const now = new Date();
-    const todayStr = now.toLocaleDateString('en-CA'); 
-    const currentTime = now.toTimeString().slice(0, 5); // "HH:MM"
+    // UTC to IST offset is 5.5 hours. now.getTime() is UTC.
+    const istOffset = 5.5 * 60 * 60 * 1000;
+    const istDate = new Date(now.getTime() + istOffset);
+    const todayStr = istDate.toISOString().split('T')[0]; 
+    const currentTime = istDate.toISOString().split('T')[1].slice(0, 5); // "HH:MM" in IST
 
     // Filter slots based on role and time
     slots = slots.filter(slot => {
